@@ -9,7 +9,7 @@ import javafx.stage.Stage;
 public class Main extends Application {
     @Override
     public void start(Stage primaryStage) throws Exception {
-        Parent root = FXMLLoader.load(getClass().getResource("GameView.fxml"));
+        Parent root = FXMLLoader.load(getClass().getResource("/org/trisclient/trisclient/game-view.fxml"));
         primaryStage.setTitle("Tris Client");
         primaryStage.setScene(new Scene(root));
         primaryStage.show();
