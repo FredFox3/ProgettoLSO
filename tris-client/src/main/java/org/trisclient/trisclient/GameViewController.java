@@ -157,7 +157,9 @@ public class GameViewController implements Initializable {
             System.out.println(getCurrentTimestamp() + " - Rilevato messaggio 'inserisci mossa'. Abilito il turno.");
             for(int i=0; i<3; i++) for(int j=0; j<3; j++) buttons[i][j].setDisable(false);
             myTurn = true;
-            TextTurno.setText("Il tuo turno!");
+            char symbol = getSymbol(msg);
+            String turnText = "Il tuo turno! (" + symbol + ")";
+            TextTurno.setText(turnText);
 
         } else if (msg.contains("Hai vinto") || msg.contains("Hai perso") || msg.contains("Pareggio")) {
             System.out.println(getCurrentTimestamp() + " - Rilevato messaggio di fine partita: " + msg);
@@ -169,7 +171,8 @@ public class GameViewController implements Initializable {
         } else if (msg.contains("L'altro giocatore si è disconnesso")) {
             if (msg.contains("prima dell'inizio")) {
                 System.out.println(getCurrentTimestamp() + " - Ricevuto messaggio: avversario disconnesso pre-partita.");
-                TextTurno.setText("Avversario disconnesso. In attesa di un nuovo giocatore...");
+                char symbol = getSymbol(msg);
+                TextTurno.setText("Avversario disconnesso. Simbolo assegnato (" + symbol + ").  In attesa di un nuovo giocatore...");
             } else {
                 System.out.println(getCurrentTimestamp() + " - Ricevuto messaggio: avversario disconnesso in-game/post-partita.");
                 TextTurno.setText(msg.trim().isEmpty() ? "L'avversario si è disconnesso." : msg.trim());
@@ -180,7 +183,8 @@ public class GameViewController implements Initializable {
 
         } else if (msg.contains("Benvenuto")) {
             System.out.println(getCurrentTimestamp() + " - Messaggio di benvenuto ricevuto.");
-            TextTurno.setText("Connesso. In attesa dell'altro giocatore...");
+            char symbol = getSymbol(msg);
+            TextTurno.setText("Connesso. Simbolo assegnato (" + symbol + ") In attesa dell'altro giocatore...");
             for(int i=0; i<3; i++) for(int j=0; j<3; j++) buttons[i][j].setDisable(false);
             myTurn = false;
 
@@ -200,6 +204,21 @@ public class GameViewController implements Initializable {
                 System.out.println(getCurrentTimestamp() + " - Messaggio server non classificato: [" + msg + "]");
             }
         }
+    }
+
+    private char getSymbol(String msg) {
+        char symbol = ' ';
+        int openParen = msg.indexOf('(');
+        int closeParen = msg.indexOf(')');
+        if (openParen != -1 && closeParen > openParen + 1) {
+            symbol = msg.charAt(openParen + 1);
+            if (symbol != 'X' && symbol != 'O') {
+                System.err.println(getCurrentTimestamp() + " - WARNING: Simbolo non riconosciuto nel prompt: " + msg);
+            }
+        } else {
+            System.err.println(getCurrentTimestamp() + " - WARNING: Parentesi non trovate nel prompt: " + msg);
+        }
+        return symbol;
     }
 
     private void parseAndDisplayBoard(List<String> completeBoardLines) {

@@ -212,8 +212,11 @@ int main() {
             current_client_count++;
 
             LOG("Giocatore %d/%d assegnato allo slot %d connesso (fd: %d)\n", current_client_count, MAX_CLIENTS, client_slot, client_fd[client_slot]);
-            char msg[] = "Benvenuto! In attesa dell'altro giocatore...\n";
-            ssize_t sent_bytes = send(client_fd[client_slot], msg, strlen(msg), MSG_NOSIGNAL);
+            char welcome_msg_buffer[100]; // Buffer per contenere il messaggio formattato
+            char symbol = (client_slot == 0 ? 'X' : 'O'); // Determina il simbolo
+            snprintf(welcome_msg_buffer, sizeof(welcome_msg_buffer),
+                    "Benvenuto (%c)! In attesa dell'altro giocatore...\n", symbol);
+            ssize_t sent_bytes = send(client_fd[client_slot], welcome_msg_buffer, strlen(welcome_msg_buffer), MSG_NOSIGNAL);
 
             if (sent_bytes <= 0) {
                  if (sent_bytes == 0) {
