@@ -73,12 +73,24 @@ public class GameViewController implements Initializable {
                     Platform.runLater(() -> processServerMessage(msg));
                 }
                 System.out.println(getCurrentTimestamp() + " - Connessione chiusa dal server.");
-                Platform.runLater(() -> TextTurno.setText("Disconnesso dal server."));
+                Platform.runLater(() -> {
+                    if (!TextTurno.getText().contains("vinto") && !TextTurno.getText().contains("perso") &&
+                            !TextTurno.getText().contains("Pareggio") && !TextTurno.getText().contains("arrestando") &&
+                            !TextTurno.getText().contains("disconnesso")) {
+                        TextTurno.setText("Disconnesso dal server.");
+                    }
+                    for(int i=0; i<3; i++) for(int j=0; j<3; j++) buttons[i][j].setDisable(true);
+                });
+
 
             } catch (IOException ex) {
-                ex.printStackTrace();
-                System.err.println(getCurrentTimestamp() + " - Errore di I/O nel thread di rete: " + ex.getMessage());
-                Platform.runLater(() -> TextTurno.setText("Errore di connessione/comunicazione."));
+                if (!(ex instanceof java.net.SocketException && ex.getMessage().contains("Socket closed"))) {
+                    ex.printStackTrace();
+                    System.err.println(getCurrentTimestamp() + " - Errore di I/O nel thread di rete: " + ex.getMessage());
+                    Platform.runLater(() -> TextTurno.setText("Errore di connessione/comunicazione."));
+                } else {
+                    System.out.println(getCurrentTimestamp() + " - Socket chiuso localmente, terminazione thread di rete.");
+                }
             } finally {
                 try {
                     if (socket != null && !socket.isClosed()) {
@@ -134,7 +146,8 @@ public class GameViewController implements Initializable {
     }
 
     private boolean isPotentialBoardStart(String msg) {
-        return msg.contains("|");
+        String trimmed = msg.trim();
+        return msg.contains("|") && (trimmed.startsWith("X") || trimmed.startsWith("O") || trimmed.startsWith("|") || trimmed.isEmpty());
     }
 
     private void processCommandMessage(String msg) {
@@ -142,34 +155,49 @@ public class GameViewController implements Initializable {
 
         if (msg.contains("inserisci la tua mossa")) {
             System.out.println(getCurrentTimestamp() + " - Rilevato messaggio 'inserisci mossa'. Abilito il turno.");
+            for(int i=0; i<3; i++) for(int j=0; j<3; j++) buttons[i][j].setDisable(false);
             myTurn = true;
             TextTurno.setText("Il tuo turno!");
+
         } else if (msg.contains("Hai vinto") || msg.contains("Hai perso") || msg.contains("Pareggio")) {
             System.out.println(getCurrentTimestamp() + " - Rilevato messaggio di fine partita: " + msg);
             TextTurno.setText(msg.trim());
             myTurn = false;
             for(int i=0; i<3; i++) for(int j=0; j<3; j++) buttons[i][j].setDisable(true);
-            System.out.println(getCurrentTimestamp() + " - Bottoni disabilitati.");
+            System.out.println(getCurrentTimestamp() + " - Bottoni disabilitati post-partita.");
+
+        } else if (msg.contains("L'altro giocatore si è disconnesso")) {
+            if (msg.contains("prima dell'inizio")) {
+                System.out.println(getCurrentTimestamp() + " - Ricevuto messaggio: avversario disconnesso pre-partita.");
+                TextTurno.setText("Avversario disconnesso. In attesa di un nuovo giocatore...");
+            } else {
+                System.out.println(getCurrentTimestamp() + " - Ricevuto messaggio: avversario disconnesso in-game/post-partita.");
+                TextTurno.setText(msg.trim().isEmpty() ? "L'avversario si è disconnesso." : msg.trim());
+                myTurn = false;
+                for(int i=0; i<3; i++) for(int j=0; j<3; j++) buttons[i][j].setDisable(true);
+                System.out.println(getCurrentTimestamp() + " - Bottoni disabilitati per disconnessione avversario.");
+            }
+
         } else if (msg.contains("Benvenuto")) {
             System.out.println(getCurrentTimestamp() + " - Messaggio di benvenuto ricevuto.");
             TextTurno.setText("Connesso. In attesa dell'altro giocatore...");
+            for(int i=0; i<3; i++) for(int j=0; j<3; j++) buttons[i][j].setDisable(false);
+            myTurn = false;
+
         } else if (msg.contains("SERVER_SHUTDOWN")) {
             System.out.println(getCurrentTimestamp() + " - Ricevuto messaggio di shutdown dal server.");
             TextTurno.setText("Il server si sta arrestando.");
             myTurn = false;
             for(int i=0; i<3; i++) for(int j=0; j<3; j++) buttons[i][j].setDisable(true);
-        } else if (msg.contains("L'altro giocatore si è disconnesso")) {
-            System.out.println(getCurrentTimestamp() + " - Ricevuto messaggio di disconnessione avversario.");
-            TextTurno.setText("L'avversario si è disconnesso.");
-            myTurn = false;
-            for(int i=0; i<3; i++) for(int j=0; j<3; j++) buttons[i][j].setDisable(true);
+            System.out.println(getCurrentTimestamp() + " - Bottoni disabilitati per shutdown server.");
+
         } else if (msg.contains("non valido") || msg.contains("non valida")) {
             System.out.println(getCurrentTimestamp() + " - Ricevuto messaggio di errore mossa: " + msg);
             TextTurno.setText("Server: " + msg.trim());
-        }
-        else {
+
+        } else {
             if (!msg.trim().isEmpty()) {
-                System.out.println(getCurrentTimestamp() + " - Messaggio server non classificato (ignorando): " + msg);
+                System.out.println(getCurrentTimestamp() + " - Messaggio server non classificato: [" + msg + "]");
             }
         }
     }
@@ -187,6 +215,7 @@ public class GameViewController implements Initializable {
                     if (boardRowIndex < 3 && boardColIndex < 3) {
                         String symbol = cell.trim();
                         buttons[boardRowIndex][boardColIndex].setText(symbol.isEmpty() ? " " : symbol);
+                        buttons[boardRowIndex][boardColIndex].setDisable(!symbol.isEmpty());
                         boardColIndex++;
                     }
                 }
@@ -195,6 +224,15 @@ public class GameViewController implements Initializable {
                 }
             }
         }
+
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 3; j++) {
+                if (buttons[i][j].getText().trim().isEmpty()) {
+                    buttons[i][j].setDisable(!myTurn);
+                }
+            }
+        }
+
 
         if (boardRowIndex != 3) {
             System.err.println(getCurrentTimestamp() + " - WARNING: La board UI potrebbe non essere stata aggiornata completamente. Righe processate: " + boardRowIndex);
