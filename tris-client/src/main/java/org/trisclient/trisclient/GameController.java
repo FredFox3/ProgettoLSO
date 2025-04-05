@@ -1,36 +1,42 @@
 package org.trisclient.trisclient;
 
 import javafx.application.Platform;
-import javafx.event.ActionEvent;
 import javafx.fxml.FXML;
-import javafx.scene.Node;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.layout.GridPane;
-import javafx.stage.Stage; // Assicurati di importare Stage
+import javafx.stage.Stage;
+import javafx.stage.Window;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
 import java.util.List;
-import java.util.function.Consumer; // Per il callback
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 public class GameController implements NetworkService.ServerListener {
 
-    @FXML private GridPane gridPaneBoard;
-    @FXML private Label labelGameInfo;
-    @FXML private Label labelTurnInfo;
-    @FXML private Button buttonBackToLobby; // Bottone opzionale per tornare indietro
+    @FXML private Label TextTurno;
+    @FXML private GridPane gridPane;
 
     private NetworkService networkService;
     private int gameId;
-    private char mySymbol; // 'X' o 'O'
+    private char mySymbol;
     private String opponentName;
-    private boolean myTurn = false;
-    private boolean gameEnded = false; // Flag per evitare azioni dopo fine partita
-    private Consumer<String> returnToHomeCallback; // Callback per tornare alla home
+    private Consumer<String> returnToHomeCallback;
 
-    private Button[][] buttons; // Array per riferimento ai bottoni della griglia
+    private Button[][] buttons = new Button[3][3];
+    // Accesso solo da thread JavaFX dopo setup
+    private boolean myTurn = false;
+    // Flags atomici per stato condiviso tra network thread e FX thread
+    private final AtomicBoolean isSetupComplete = new AtomicBoolean(false);
+    private final AtomicBoolean gameActive = new AtomicBoolean(false);
+
+    // Cache interna - ora popolata anche da setupGame con i dati passati da HomePageController
+    private volatile String[] cachedBoard = null;
+    private final AtomicBoolean cachedTurn = new AtomicBoolean(false);
 
     private static final DateTimeFormatter TIMESTAMP_FORMATTER =
             DateTimeFormatter.ofPattern("HH:mm:ss.SSS");
@@ -41,344 +47,498 @@ public class GameController implements NetworkService.ServerListener {
 
     @FXML
     public void initialize() {
-        System.out.println(getCurrentTimestamp() + " - GameController ("+this.hashCode()+"): initialize CALLED");
-        // Inizializza l'array di bottoni
-        buttons = new Button[3][3];
-        for (Node node : gridPaneBoard.getChildren()) {
-            if (node instanceof Button) {
-                Button button = (Button) node;
-                Integer row = GridPane.getRowIndex(node);
-                Integer col = GridPane.getColumnIndex(node);
-                if (row != null && col != null) {
-                    buttons[row][col] = button;
-                    // Associa l'azione del bottone qui
-                    final int r = row; // Variabili final per lambda
-                    final int c = col;
-                    button.setOnAction(event -> handleCellClick(r, c));
-                    button.setDisable(true); // Inizia con i bottoni disabilitati
-                    button.setText(""); // Pulisci testo iniziale
-                }
+        System.out.println(getCurrentTimestamp()+" - GameController ("+this.hashCode()+"): initialize CALLED");
+        isSetupComplete.set(false); // Assicura sia false all'inizio
+        gameActive.set(false);
+        cachedBoard = null;
+        cachedTurn.set(false);
+        myTurn = false;
+        // Crea i bottoni della griglia
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 3; j++) {
+                Button btn = new Button(" ");
+                btn.setMinSize(95, 95);
+                btn.setMaxSize(100,100);
+                btn.setStyle("-fx-font-size: 36px; -fx-font-weight: bold;");
+                final int row = i;
+                final int col = j;
+                btn.setOnAction(e -> handleCellClick(row, col));
+                buttons[i][j] = btn;
+                gridPane.add(btn, j, i); // j è la colonna (indice orizzontale), i è la riga (indice verticale)
             }
         }
-        buttonBackToLobby.setOnAction(this::handleBackToLobby);
-        buttonBackToLobby.setVisible(false); // Nascondi inizialmente
+        gridPane.setDisable(true); // Inizia disabilitata
+        TextTurno.setText("Loading game...");
+        System.out.println(getCurrentTimestamp()+" - GameController ("+this.hashCode()+"): initialize FINISHED");
     }
 
-    // Metodo chiamato da HomePageController per passare i dati
-    public void setupGame(NetworkService service, int gameId, char symbol, String opponentName, Consumer<String> returnCallback) {
-        System.out.println(getCurrentTimestamp() + " - GameController ("+this.hashCode()+"): setupGame CALLED - GameID: " + gameId + ", Symbol: " + symbol + ", Opponent: " + opponentName);
-        this.networkService = service;
+    // Accetta board e turn iniziali cachati da HomePageController
+    public void setupGame(NetworkService serviceInstance, int gameId, char symbol, String opponentName,
+                          Consumer<String> returnCallback,
+                          String[] initialBoard, boolean initialTurn) { // Nuovi parametri
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): setupGame CALLED. Service: " + serviceInstance + ", GameID: " + gameId + ", Symbol: " + symbol + ", Opponent: " + opponentName);
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): setupGame received initialBoard=" + (initialBoard != null ? Arrays.toString(initialBoard) : "null") + ", initialTurn=" + initialTurn);
+
+        this.networkService = serviceInstance;
         this.gameId = gameId;
         this.mySymbol = symbol;
         this.opponentName = opponentName;
         this.returnToHomeCallback = returnCallback;
-        this.gameEnded = false; // Resetta flag
-        this.myTurn = false;    // Inizia assumendo che non sia il mio turno (viene notificato)
+
+        // Resetta stati logici
+        this.isSetupComplete.set(false);
+        this.gameActive.set(false);
+        this.myTurn = false; // Importante resettare myTurn
+
+        // Popola la cache interna con i valori passati (se presenti)
+        if (initialBoard != null) {
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Populating internal cache with initialBoard.");
+            this.cachedBoard = initialBoard;
+        } else {
+            this.cachedBoard = null;
+        }
+        if (initialTurn) {
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Populating internal cache with initialTurn=true.");
+            this.cachedTurn.set(true);
+        } else {
+            this.cachedTurn.set(false);
+        }
 
         if (this.networkService == null) {
-            System.err.println(getCurrentTimestamp() + " - GameController ("+this.hashCode()+"): FATAL ERROR - NetworkService is NULL in setupGame!");
-            showError("Errore Critico", "Errore di comunicazione. Impossibile avviare la partita.");
-            // Torna indietro subito se possibile
-            Platform.runLater(() -> { // Esegui nel thread FX
-                if(returnToHomeCallback != null) returnToHomeCallback.accept("Errore network service");
+            System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+") FATAL: NetworkService instance is null in setupGame!");
+            Platform.runLater(() -> {
+                showError("Errore Critico", "Errore interno, impossibile avviare la partita.");
+                if (returnToHomeCallback != null) returnToHomeCallback.accept("Internal Error");
             });
             return;
         }
 
-        // Imposta il listener su QUESTA istanza di GameController
-        System.out.println(getCurrentTimestamp() + " - GameController ("+this.hashCode()+"): Setting Network Listener to THIS instance.");
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): --- About to set listener ---");
         this.networkService.setServerListener(this);
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): --- Listener set ---");
 
-        // Aggiorna UI iniziale
+        // Pianifica il completamento del setup e l'elaborazione della cache sul thread JavaFX
         Platform.runLater(() -> {
-            labelGameInfo.setText("Partita " + gameId + " vs " + opponentName + " (Tu sei " + mySymbol + ")");
-            labelTurnInfo.setText("In attesa del tuo turno...");
-            // Pulisci la griglia da eventuali stati precedenti
-            resetBoardUI();
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+") (in Platform.runLater): Starting final setup steps.");
+            TextTurno.setText("Partita " + gameId + " vs " + opponentName + ". Tu sei " + mySymbol + ". Attendendo...");
+            gridPane.setDisable(true); // Assicura che sia disabilitata prima di processare cache/eventi
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+") (in Platform.runLater): Initial text set and grid disabled.");
+
+            isSetupComplete.set(true);
+            gameActive.set(true);
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+") (in Platform.runLater): Setup COMPLETE. isSetupComplete=true, gameActive=true");
+
+            // Elabora la cache interna
+            processCachedMessages();
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+") (in Platform.runLater): Finished final setup steps.");
         });
+
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): setupGame method finished (Platform.runLater scheduled).");
     }
 
-    // Gestisce il click su una cella
-    private void handleCellClick(int row, int col) {
-        System.out.println(getCurrentTimestamp() + " - GameController ("+this.hashCode()+"): Cell clicked: " + row + "," + col);
-        if (myTurn && !gameEnded && networkService != null && networkService.isConnected()) {
-            System.out.println(getCurrentTimestamp() + " - GameController ("+this.hashCode()+"): Sending MOVE " + row + " " + col);
-            networkService.sendMove(row, col);
-            // Disabilita input finché il server non risponde o passa il turno
-            setMyTurn(false);
-            Platform.runLater(() -> labelTurnInfo.setText("Mossa inviata. Attendi..."));
-        } else if (gameEnded) {
-            System.out.println(getCurrentTimestamp() + " - GameController ("+this.hashCode()+"): Click ignored, game ended.");
-        } else if (!myTurn) {
-            System.out.println(getCurrentTimestamp() + " - GameController ("+this.hashCode()+"): Click ignored, not my turn.");
-            Platform.runLater(() -> labelTurnInfo.setText("Non è il tuo turno!"));
-        } else {
-            System.err.println(getCurrentTimestamp() + " - GameController ("+this.hashCode()+"): Click ignored, not connected or service null.");
-            showError("Errore", "Non connesso al server.");
+    // Eseguito nel thread JavaFX alla fine di setupGame
+    private void processCachedMessages() {
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Processing cached messages START");
+        boolean processedSomething = false;
+
+        String[] boardToProcess = this.cachedBoard;
+        if (boardToProcess != null) {
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Found cached board: " + Arrays.toString(boardToProcess) + ". Processing...");
+            this.cachedBoard = null;
+            handleBoardUpdateInternal(boardToProcess);
+            processedSomething = true;
         }
-    }
 
-    // Gestisce il click sul bottone "Torna alla Lobby"
-    private void handleBackToLobby(ActionEvent event) {
-        System.out.println(getCurrentTimestamp()+" - GameController ("+this.hashCode()+"): Back to Lobby button clicked.");
-        // Qui potresti voler inviare un messaggio di forfeit se la partita non è finita?
-        // Per ora, assumiamo che sia visibile solo a fine partita.
-        if (returnToHomeCallback != null) {
-            returnToHomeCallback.accept("Ritorno alla lobby richiesto.");
-        } else {
-            System.err.println(getCurrentTimestamp()+" - GameController ("+this.hashCode()+"): returnToHomeCallback is null!");
-            showError("Errore UI", "Impossibile tornare alla lobby.");
+        if (this.cachedTurn.getAndSet(false)) {
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Found cached turn. Processing...");
+            handleYourTurnInternal();
+            processedSomething = true;
         }
-    }
 
-    // Imposta se è il turno del giocatore e aggiorna la UI
-    private void setMyTurn(boolean turn) {
-        this.myTurn = turn;
-        Platform.runLater(() -> {
-            if (gameEnded) return; // Non aggiornare se la partita è finita
-            if (turn) {
-                labelTurnInfo.setText("È il tuo turno (" + mySymbol + ")");
-                // Abilita solo le celle vuote
-                enableEmptyCells(true);
-            } else {
-                labelTurnInfo.setText("È il turno di " + opponentName + "...");
-                // Disabilita tutta la griglia
-                enableEmptyCells(false);
-            }
-        });
-    }
-
-    // Abilita/Disabilita le celle vuote sulla griglia
-    private void enableEmptyCells(boolean enable) {
-        if (buttons == null) return;
-        for (int r = 0; r < 3; r++) {
-            for (int c = 0; c < 3; c++) {
-                if (buttons[r][c] != null) {
-                    if (enable && buttons[r][c].getText().isEmpty()) {
-                        buttons[r][c].setDisable(false);
-                    } else {
-                        buttons[r][c].setDisable(true);
-                    }
-                }
-            }
+        if (!processedSomething) {
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): No cached messages to process.");
         }
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Processing cached messages END");
     }
 
-    // Pulisce e resetta la UI della griglia
-    private void resetBoardUI() {
-        if (buttons == null) return;
-        for (int r = 0; r < 3; r++) {
-            for (int c = 0; c < 3; c++) {
-                if (buttons[r][c] != null) {
-                    buttons[r][c].setText("");
-                    buttons[r][c].setDisable(true); // Inizia disabilitata
-                    // Rimuovi eventuali stili specifici (es. colore vincitore)
-                    buttons[r][c].getStyleClass().remove("winning-button"); // Esempio di classe CSS
-                }
-            }
-        }
-    }
-
-
-    // --- Implementazione Metodi ServerListener ---
+    // --- Implementazione ServerListener ---
 
     @Override
-    public void onConnected() {
-        // Non dovrebbe essere chiamato qui se setupGame funziona correttamente
-        System.err.println(getCurrentTimestamp()+" - GameController ("+this.hashCode()+"): !!! Received onConnected UNEXPECTEDLY !!!");
-        // Potrebbe indicare un problema di riconnessione non gestito
-        Platform.runLater(() -> showError("Errore", "Riconnessione inattesa durante la partita."));
-        // Potrebbe essere necessario tornare alla lobby
+    public void onBoardUpdate(String[] boardCells) {
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): *** onBoardUpdate received on FX Thread *** | isSetupComplete=" + isSetupComplete.get() + ", gameActive=" + gameActive.get() + ", Board: " + Arrays.toString(boardCells));
+
+        if (!isSetupComplete.get()) {
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Caching board update (setup still incomplete).");
+            this.cachedBoard = boardCells;
+        } else if (!gameActive.get()) {
+            System.out.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): Ignoring board update as game is not active.");
+        } else {
+            System.out.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): Setup complete and game active. Processing board update directly.");
+            handleBoardUpdateInternal(boardCells);
+        }
+    }
+
+    // --- MODIFICATO ---
+    // Logica interna di aggiornamento UI board (chiamata solo da thread FX)
+    private void handleBoardUpdateInternal(String[] boardCells) {
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): handleBoardUpdateInternal processing board | Current myTurn="+myTurn);
+        if (boardCells.length != 9) {
+            System.err.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): ERROR Invalid board length received: " + boardCells.length);
+            return;
+        }
+        // 1. Update button texts and disable NON-EMPTY buttons
+        int emptyCells = 0;
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 3; j++) {
+                // Assicurati che buttons[i][j] non sia null (dovrebbe essere creato in initialize)
+                if (buttons[i][j] == null) {
+                    System.err.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): ERROR Button at ["+i+"]["+j+"] is null!");
+                    continue;
+                }
+                String symbol = boardCells[i * 3 + j];
+                boolean isEmpty = "EMPTY".equals(symbol);
+                // Imposta il testo del bottone (' ' se vuoto, altrimenti il simbolo)
+                buttons[i][j].setText(isEmpty ? " " : symbol);
+                // Disabilita il bottone SOLO se NON è vuoto.
+                // Non abilitare esplicitamente quelli vuoti qui.
+                buttons[i][j].setDisable(!isEmpty);
+                if(isEmpty) emptyCells++;
+            }
+        }
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Board UI updated (texts and disabled non-empty). Empty cells: " + emptyCells);
+
+        // 2. Manage grid enabled state based ONLY on myTurn
+        // Se NON è il mio turno, disabilita l'intera griglia.
+        // Se È il mio turno, lo stato della griglia è già stato gestito da handleYourTurnInternal,
+        // quindi non facciamo nulla qui per evitare conflitti.
+        if (!myTurn) {
+            gridPane.setDisable(true);
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): handleBoardUpdateInternal - Grid disabled (not my turn).");
+        } else {
+            // Se è il mio turno, la griglia dovrebbe essere abilitata.
+            // I bottoni non vuoti sono stati disabilitati dal ciclo sopra.
+            // Non serve toccare lo stato della griglia qui.
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): handleBoardUpdateInternal - Grid state untouched (my turn).");
+        }
+        // Log finale dello stato della griglia per debug
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): handleBoardUpdateInternal END | Grid disabled: " + gridPane.isDisabled());
+    }
+
+
+    @Override
+    public void onYourTurn() {
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): *** onYourTurn received on FX Thread *** | isSetupComplete=" + isSetupComplete.get() + ", gameActive=" + gameActive.get());
+
+        if (!isSetupComplete.get()) {
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Caching turn notification (setup incomplete).");
+            this.cachedTurn.set(true);
+        } else if (!gameActive.get()) {
+            System.out.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): Ignoring turn notification as game is not active.");
+        } else {
+            System.out.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): Setup complete and game active. Processing turn notification directly.");
+            handleYourTurnInternal();
+        }
+    }
+
+    // Logica interna gestione turno (chiamata solo da thread FX)
+    private void handleYourTurnInternal() {
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): handleYourTurnInternal processing | Current myTurn state = "+myTurn);
+        if (!gameActive.get()) {
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): handleYourTurnInternal - Game not active, ignoring.");
+            return;
+        }
+        myTurn = true; // Imposta che è il mio turno
+        TextTurno.setText("Il tuo turno! (" + mySymbol + ")");
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Enabling GridPane and empty buttons for your turn.");
+        gridPane.setDisable(false); // Abilita l'intera griglia
+        int enabledCount = 0;
+        // Itera sui bottoni e abilita SOLO quelli vuoti
+        for(int r=0; r<3; r++) {
+            for (int c=0; c<3; c++) {
+                // Assicurati che buttons[r][c] non sia null
+                if (buttons[r][c] == null) {
+                    System.err.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): ERROR Button at ["+r+"]["+c+"] is null!");
+                    continue;
+                }
+                boolean isEmpty = buttons[r][c].getText().trim().isEmpty();
+                // Abilita il bottone se è vuoto, disabilitalo altrimenti
+                buttons[r][c].setDisable(!isEmpty);
+                if(isEmpty) {
+                    enabledCount++;
+                }
+            }
+        }
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Finished enabling buttons. Enabled count: " + enabledCount);
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): handleYourTurnInternal END | Grid disabled: " + gridPane.isDisabled());
+    }
+
+    // Chiamato quando si clicca una cella (dal thread JavaFX)
+    private void handleCellClick(int row, int col) {
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Cell clicked: " + row + "," + col + " (myTurn=" + myTurn + ", gameActive="+gameActive.get()+")");
+
+        // Assicurati che buttons[row][col] non sia null
+        if (buttons[row][col] == null) {
+            System.err.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): ERROR Clicked button at ["+row+"]["+col+"] is null!");
+            return;
+        }
+
+        // Controlla se è il mio turno, se il gioco è attivo e se la cella cliccata è vuota
+        if (myTurn && gameActive.get() && buttons[row][col].getText().trim().isEmpty()) {
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Valid click detected.");
+            myTurn = false; // Disabilita subito il turno per evitare doppi click
+
+            // Aggiorna immediatamente l'interfaccia (sempre su thread FX)
+            buttons[row][col].setText(String.valueOf(mySymbol));
+            gridPane.setDisable(true); // Disabilita tutta la griglia mentre si attende la risposta
+            TextTurno.setText("Invio mossa ("+row+","+col+"). Attendi...");
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): UI updated for pending move.");
+
+            // Invia il comando MOVE al server
+            if(networkService != null) {
+                System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Sending MOVE "+row+" "+col);
+                networkService.sendMove(row, col);
+            } else {
+                System.err.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Cannot send MOVE, networkService is null!");
+                showError("Errore di Rete", "Impossibile inviare la mossa.");
+                TextTurno.setText("Errore di connessione.");
+                // Potrebbe essere necessario un meccanismo per tornare alla home qui
+                if (gameActive.compareAndSet(true, false)) { // Marca gioco inattivo
+                    if (returnToHomeCallback != null) Platform.runLater(() -> returnToHomeCallback.accept("Network Error"));
+                }
+            }
+        } else {
+            // Log perché il click è stato ignorato
+            if (!myTurn) System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Click ignored (not my turn).");
+            else if (!gameActive.get()) System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Click ignored (game not active).");
+            else System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Click ignored (cell not empty).");
+        }
+    }
+
+    // --- Altri Metodi Listener (GameOver, OpponentLeft, Error, etc.) ---
+    // --- E altri metodi (handleLeaveGame, onDisconnected, showInfo, showError) ---
+    // --- RESTANO INVARIATI (non li ripeto per brevità, ma assicurati di averli) ---
+    // ... (Includi qui il resto del codice di GameController.java che hai già) ...
+
+    @Override
+    public void onGameOver(String result) {
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): *** onGameOver received on FX Thread *** Result: " + result + ". Current gameActive=" + gameActive.get());
+        if (!gameActive.compareAndSet(true, false)) {
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): GameOver received, but game already inactive. Ignoring.");
+            return;
+        }
+        myTurn = false;
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Game deactivated due to GameOver.");
+
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Updating UI for GameOver.");
+        gridPane.setDisable(true);
+        String message;
+        switch (result) {
+            case "WIN": message = "Hai Vinto!"; break;
+            case "LOSE": message = "Hai Perso."; break;
+            case "DRAW": message = "Pareggio!"; break;
+            default: message = "Partita terminata (" + result + ")";
+        }
+        TextTurno.setText(message);
+        showInfo("Partita Terminata", message + "\nTorni alla lobby.");
         if (returnToHomeCallback != null) {
-            returnToHomeCallback.accept("Errore: Riconnessione inattesa.");
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Calling returnToHomeCallback.");
+            returnToHomeCallback.accept(message);
+        } else {
+            System.err.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): returnToHomeCallback is null after game over!");
+        }
+    }
+
+    @Override
+    public void onOpponentLeft() {
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): *** onOpponentLeft received on FX Thread *** Current gameActive=" + gameActive.get());
+        if (!gameActive.compareAndSet(true, false)) {
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): OpponentLeft received, but game already inactive. Ignoring.");
+            return;
+        }
+        myTurn = false;
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Game deactivated due to OpponentLeft.");
+
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Updating UI for OpponentLeft.");
+        gridPane.setDisable(true);
+        String message = "L'avversario ha abbandonato la partita.";
+        TextTurno.setText(message);
+        showInfo("Avversario Disconnesso", message + "\nTorni alla lobby.");
+        if (returnToHomeCallback != null) {
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Calling returnToHomeCallback.");
+            returnToHomeCallback.accept("Opponent left");
+        } else {
+            System.err.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): returnToHomeCallback is null after opponent left!");
+        }
+    }
+
+    @Override
+    public void onError(String message) {
+        System.err.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): *** onError received on FX Thread *** Message: " + message + " | gameActive="+gameActive.get());
+        if (!gameActive.get()) {
+            System.out.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): Error received but game not active. Ignoring. Message: "+message);
+            return;
+        }
+
+        System.out.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): Processing error while game is active.");
+        if (message.contains("Not your turn")) {
+            TextTurno.setText("Attendi il tuo turno!");
+            myTurn = false; // Assicurati che myTurn sia false
+            gridPane.setDisable(true); // Disabilita la griglia
+            // Non serve ciclare sui bottoni, l'intera griglia è disabilitata
+        } else if (message.contains("Invalid move")) {
+            TextTurno.setText("Mossa non valida! Riprova.");
+            // Non reimpostare myTurn a true qui, potrebbe causare problemi se l'errore
+            // è arrivato per un altro motivo. Lascia che sia il server a ridare il turno.
+            // Invece, riabilita la griglia e i bottoni vuoti se myTurn è ancora true.
+            if (myTurn) { // Solo se pensavamo fosse ancora il nostro turno
+                gridPane.setDisable(false);
+                int enabledCount = 0;
+                for(int r=0; r<3; r++) {
+                    for (int c=0; c<3; c++) {
+                        // Assicurati che buttons[r][c] non sia null
+                        if (buttons[r][c] == null) continue;
+                        boolean isEmpty = buttons[r][c].getText().trim().isEmpty();
+                        buttons[r][c].setDisable(!isEmpty);
+                        if(isEmpty) enabledCount++;
+                    }
+                }
+                System.out.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): Re-enabled grid and " + enabledCount + " empty buttons after invalid move (myTurn was true).");
+            } else {
+                System.out.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): Invalid move error received, but myTurn was already false. Grid remains disabled.");
+                gridPane.setDisable(true); // Assicura che sia disabilitata
+            }
+        } else {
+            // Errore generico dal server
+            showError("Errore dal Server", message);
+            TextTurno.setText("Errore: " + message);
+            // Disabilita la griglia per sicurezza in caso di errore sconosciuto
+            gridPane.setDisable(true);
+            // Considera se tornare alla lobby in caso di errori gravi
+            // if (gameActive.compareAndSet(true, false)) {
+            //    if (returnToHomeCallback != null) Platform.runLater(() -> returnToHomeCallback.accept("Server Error: "+message));
+            // }
+        }
+    }
+
+
+    @FXML
+    private void handleLeaveGame() {
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Leave Game button clicked. gameActive="+gameActive.get());
+        NetworkService service = this.networkService;
+
+        // Usa compareAndSet per assicurarsi che l'azione venga eseguita solo una volta
+        if (gameActive.compareAndSet(true, false)) {
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Game deactivated due to Leave Game button.");
+            myTurn = false;
+
+            gridPane.setDisable(true); // Disabilita UI
+            TextTurno.setText("Uscita dalla partita...");
+
+            if (service != null && service.isConnected()) {
+                System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Sending QUIT to server.");
+                service.sendQuit();
+                // La gestione del ritorno alla home avverrà in onDisconnected
+            } else {
+                // Se non siamo connessi ma il gioco era segnato come attivo (stato inconsistente?)
+                System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Game was marked active but not connected or service null. Returning home directly.");
+                if (returnToHomeCallback != null) {
+                    // Chiamata deve essere fatta da Platform.runLater se non siamo sicuri del thread
+                    Platform.runLater(() -> returnToHomeCallback.accept("Left game (not connected)"));
+                } else {
+                    System.err.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): returnToHomeCallback is null when leaving game without connection!");
+                }
+            }
+        } else {
+            // Se il gioco era già inattivo, ma siamo ancora su questa schermata
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Leave game clicked but game already inactive.");
+            // Forziamo il ritorno a casa se il callback esiste
+            if (returnToHomeCallback != null) {
+                Platform.runLater(() -> returnToHomeCallback.accept("Left game (already inactive)"));
+            }
         }
     }
 
     @Override
     public void onDisconnected(String reason) {
-        System.out.println(getCurrentTimestamp()+" - GameController ("+this.hashCode()+"): GUI: onDisconnected. Reason: " + reason);
-        if (gameEnded) return; // Se la partita era già finita, non fare nulla
-        gameEnded = true; // Marca come finita a causa della disconnessione
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): *** onDisconnected event received on FX Thread *** Reason: " + reason + ". Current gameActive=" + gameActive.get());
 
-        Platform.runLater(() -> {
-            showError("Disconnesso", "Connessione persa: " + reason + "\nVerrai riportato alla lobby.");
-            labelTurnInfo.setText("Disconnesso.");
-            enableEmptyCells(false); // Disabilita griglia
-            buttonBackToLobby.setVisible(true); // Mostra bottone per tornare
-            // Torna alla home automaticamente dopo l'alert?
-            if (returnToHomeCallback != null) {
-                returnToHomeCallback.accept("Disconnesso durante la partita.");
+        // Controlla se il gioco era attivo e marcalo come inattivo
+        if (gameActive.compareAndSet(true, false)) {
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Game deactivated due to Disconnection.");
+            myTurn = false;
+
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Updating UI for disconnection during game.");
+            gridPane.setDisable(true);
+            TextTurno.setText("Disconnesso: " + reason);
+            // Mostra notifica solo se la disconnessione non è stata intenzionale (QUIT)
+            if (!"Disconnected by client".equals(reason)) {
+                showInfo("Disconnesso", "Connessione persa durante la partita: " + reason + "\nTorni alla lobby.");
             }
-        });
+            if (returnToHomeCallback != null) {
+                System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Calling returnToHomeCallback.");
+                returnToHomeCallback.accept("Disconnected: " + reason);
+            } else {
+                System.err.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): returnToHomeCallback is null after disconnection!");
+            }
+        } else {
+            // Il gioco era già inattivo, ma abbiamo ricevuto onDisconnected
+            // Potrebbe essere la conferma dopo aver premuto "Leave Game"
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Disconnected received, but game already inactive. Reason: " + reason);
+            // Se siamo ancora su questa schermata, torniamo alla home
+            if (returnToHomeCallback != null) {
+                System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Calling returnToHomeCallback for inactive game disconnection.");
+                // Usiamo Platform.runLater per sicurezza, anche se dovremmo essere già su FX thread
+                Platform.runLater(() -> returnToHomeCallback.accept("Disconnected: " + reason));
+            }
+        }
+    }
+
+    // --- Metodi Listener non previsti qui (lascia i log di errore) ---
+    @Override public void onConnected() { System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received onConnected UNEXPECTEDLY !!!"); }
+    @Override public void onNameRequested() { System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received NameRequested UNEXPECTEDLY !!!"); }
+    @Override public void onNameAccepted() { System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received NameAccepted UNEXPECTEDLY !!!"); }
+    @Override public void onGamesList(List<NetworkService.GameInfo> games) { System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received GamesList UNEXPECTEDLY !!!"); }
+    @Override public void onGameCreated(int gameId) { System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received GameCreated UNEXPECTEDLY for game "+gameId+" !!!"); }
+    @Override public void onJoinOk(int gameId, char symbol, String opponentName) { System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received JoinOk UNEXPECTEDLY for game "+gameId+" !!!"); }
+
+    // Gestione più robusta per GameStart ridondante
+    @Override public void onGameStart(int gameId, char symbol, String opponentName) {
+        System.out.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): Received GameStart. Target GameID="+gameId+", My GameID="+this.gameId+". Current gameActive="+gameActive.get()+", myTurn="+myTurn);
+        // Ignora se è per la partita corrente e il gioco è già attivo
+        if (this.gameId == gameId && gameActive.get()) {
+            System.out.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): Ignoring redundant GameStart signal for active game.");
+        } else {
+            // Se arriva per un'altra partita o se il gioco non è attivo, è un errore
+            System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received GameStart UNEXPECTEDLY or for wrong/inactive game !!!");
+            // Potrebbe indicare uno stato inconsistente, magari forzare ritorno alla lobby?
+            // if (returnToHomeCallback != null) Platform.runLater(() -> returnToHomeCallback.accept("Unexpected Game Start Signal"));
+        }
     }
 
     @Override
     public void onMessageReceived(String rawMessage) {
-        System.out.println(getCurrentTimestamp()+" - GameController ("+this.hashCode()+"): GUI: Unhandled message: " + rawMessage);
-        // Potresti voler mostrare questi messaggi in un log/console di debug nella UI
+        // Logga messaggi non gestiti che arrivano qui
+        System.err.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): *** onMessageReceived (Unhandled by NetworkService parser) on FX Thread *** Message: " + rawMessage);
+        // Non mostrare popup all'utente per non interrompere, ma logga l'errore.
     }
 
-    @Override
-    public void onBoardUpdate(String[] board) {
-        System.out.println(getCurrentTimestamp()+" - GameController ("+this.hashCode()+"): GUI: onBoardUpdate received.");
-        if (board.length != 9 || gameEnded) return; // Ignora se malformato o partita finita
-
-        Platform.runLater(() -> {
-            int k = 0;
-            for (int r = 0; r < 3; r++) {
-                for (int c = 0; c < 3; c++) {
-                    if (buttons[r][c] != null) {
-                        String cellState = board[k++];
-                        if (cellState.equals("EMPTY")) {
-                            buttons[r][c].setText("");
-                            // Non cambiare disabilitazione qui, dipende da onYourTurn
-                        } else { // "X" o "O"
-                            buttons[r][c].setText(cellState);
-                            buttons[r][c].setDisable(true); // Cella occupata è sempre disabilitata
-                        }
-                    }
-                }
-            }
-            // Dopo l'aggiornamento, riabilita le celle vuote *solo se* è il mio turno
-            if (myTurn) {
-                enableEmptyCells(true);
-            } else {
-                enableEmptyCells(false); // Assicura che sia disabilitata se non è il mio turno
-            }
-        });
-    }
-
-    @Override
-    public void onYourTurn() {
-        System.out.println(getCurrentTimestamp()+" - GameController ("+this.hashCode()+"): GUI: onYourTurn received.");
-        if (gameEnded) return;
-        setMyTurn(true);
-    }
-
-    // --- NUOVO METODO IMPLEMENTATO ---
-    @Override
-    public void onGameOver(String result) {
-        System.out.println(getCurrentTimestamp()+" - GameController ("+this.hashCode()+"): GUI: onGameOver received. Result: " + result);
-        if (gameEnded) {
-            System.out.println(getCurrentTimestamp()+" - GameController ("+this.hashCode()+"): onGameOver ignored, game already marked as ended.");
-            return; // Evita doppie azioni/alert se già gestito (es. da onOpponentLeft)
+    // Metodi ausiliari per mostrare dialoghi (invariati)
+    private void showInfo(String title, String content) {
+        if (!Platform.isFxApplicationThread()) {
+            Platform.runLater(() -> showInfo(title, content));
+            return;
         }
-        gameEnded = true;
-        setMyTurn(false); // Nessuno gioca più
-
-        Platform.runLater(() -> {
-            String message;
-            switch (result) {
-                case "WIN":
-                    message = "Hai Vinto!";
-                    break;
-                case "LOSE":
-                    message = "Hai Perso.";
-                    break;
-                case "DRAW":
-                    message = "Pareggio!";
-                    break;
-                default: // Caso imprevisto
-                    message = "Partita terminata (Risultato: " + result + ")";
-                    break;
-            }
-            labelTurnInfo.setText("Partita terminata.");
-            enableEmptyCells(false); // Disabilita tutta la griglia
-            buttonBackToLobby.setVisible(true); // Mostra bottone per tornare
-
-            // Mostra l'alert
-            Alert alert = new Alert(Alert.AlertType.INFORMATION);
-            alert.setTitle("Partita Terminata");
-            alert.setHeaderText(message);
-            alert.setContentText("Clicca OK per tornare alla lobby.");
-
-            // Assicura che l'owner sia impostato se la finestra è disponibile
-            try {
-                Stage owner = (Stage) gridPaneBoard.getScene().getWindow();
-                alert.initOwner(owner);
-            } catch (Exception e) { System.err.println("Could not set owner for GameOver alert: "+e.getMessage()); }
-
-            alert.showAndWait(); // Mostra l'alert e aspetta che venga chiuso
-
-            // Dopo che l'alert è stato chiuso, torna alla lobby
-            if (returnToHomeCallback != null) {
-                returnToHomeCallback.accept("Partita terminata: " + result);
-            } else {
-                System.err.println(getCurrentTimestamp()+" - GameController ("+this.hashCode()+"): returnToHomeCallback is null after game over!");
-            }
-        });
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.setTitle(title);
+        alert.setHeaderText(null);
+        alert.setContentText(content);
+        try {
+            Stage owner = getCurrentStage();
+            if (owner != null) alert.initOwner(owner);
+        } catch (Exception e) { System.err.println("Error getting owner stage for info alert: "+e.getMessage());}
+        alert.showAndWait();
     }
 
-    @Override
-    public void onOpponentLeft() {
-        System.out.println(getCurrentTimestamp()+" - GameController ("+this.hashCode()+"): GUI: onOpponentLeft received.");
-        if (gameEnded) {
-            System.out.println(getCurrentTimestamp()+" - GameController ("+this.hashCode()+"): onOpponentLeft ignored, game already marked as ended.");
-            return; // Evita doppi alert se GAMEOVER arriva subito dopo
-        }
-        gameEnded = true;
-        setMyTurn(false); // Nessuno gioca più
-
-        Platform.runLater(() -> {
-            labelTurnInfo.setText("Avversario disconnesso.");
-            enableEmptyCells(false); // Disabilita griglia
-            buttonBackToLobby.setVisible(true); // Mostra bottone
-
-            Alert alert = new Alert(Alert.AlertType.INFORMATION);
-            alert.setTitle("Partita Terminata");
-            alert.setHeaderText("L'avversario ha abbandonato la partita.");
-            alert.setContentText("Hai vinto!\nClicca OK per tornare alla lobby.");
-
-            try {
-                Stage owner = (Stage) gridPaneBoard.getScene().getWindow();
-                alert.initOwner(owner);
-            } catch (Exception e) { System.err.println("Could not set owner for OpponentLeft alert: "+e.getMessage()); }
-
-            alert.showAndWait();
-
-            // Torna alla lobby dopo l'alert
-            if (returnToHomeCallback != null) {
-                returnToHomeCallback.accept("Avversario disconnesso.");
-            } else {
-                System.err.println(getCurrentTimestamp()+" - GameController ("+this.hashCode()+"): returnToHomeCallback is null after opponent left!");
-            }
-        });
-    }
-
-    @Override
-    public void onError(String message) {
-        System.err.println(getCurrentTimestamp()+" - GameController ("+this.hashCode()+"): GUI: onError: " + message);
-        // Mostra errori non fatali all'utente
-        if (!gameEnded) { // Non mostrare errori se la partita è già finita o siamo disconnessi
-            Platform.runLater(() -> {
-                showError("Errore dal Server", message);
-                // Potresti voler aggiornare labelTurnInfo a seconda dell'errore
-                if (message.contains("Not your turn")) {
-                    labelTurnInfo.setText("Errore: Non è il tuo turno!");
-                    setMyTurn(false); // Sincronizza stato locale
-                } else if (message.contains("Invalid move")) {
-                    labelTurnInfo.setText("Errore: Mossa non valida!");
-                    // Riabilita il turno se l'errore era sulla mossa
-                    // Questo è delicato, il server dovrebbe ritrasmettere YOUR_TURN?
-                    // Per ora, manteniamo il turno disabilitato e aspettiamo il server.
-                    // setMyTurn(true); // Forse NON fare questo
-                }
-            });
-        }
-    }
-
-
-    // Metodi non usati direttamente in GameController ma richiesti dall'interfaccia
-    @Override public void onNameRequested() { System.err.println(getCurrentTimestamp()+" - GameController ("+this.hashCode()+"): !!! Received onNameRequested UNEXPECTEDLY !!!"); }
-    @Override public void onNameAccepted() { System.err.println(getCurrentTimestamp()+" - GameController ("+this.hashCode()+"): !!! Received onNameAccepted UNEXPECTEDLY !!!"); }
-    @Override public void onGamesList(List<NetworkService.GameInfo> games) { System.err.println(getCurrentTimestamp()+" - GameController ("+this.hashCode()+"): !!! Received onGamesList UNEXPECTEDLY !!!"); }
-    @Override public void onGameCreated(int gameId) { System.err.println(getCurrentTimestamp()+" - GameController ("+this.hashCode()+"): !!! Received onGameCreated UNEXPECTEDLY !!!"); }
-    @Override public void onJoinOk(int gameId, char symbol, String opponentName) { System.err.println(getCurrentTimestamp()+" - GameController ("+this.hashCode()+"): !!! Received onJoinOk UNEXPECTEDLY !!!"); }
-    @Override public void onGameStart(int gameId, char symbol, String opponentName) { System.err.println(getCurrentTimestamp()+" - GameController ("+this.hashCode()+"): !!! Received onGameStart UNEXPECTEDLY !!!"); }
-    //-------------------------------------------------------------------------------
-
-
-    // Metodo helper per mostrare errori
     private void showError(String title, String content) {
         if (!Platform.isFxApplicationThread()) {
             Platform.runLater(() -> showError(title, content));
@@ -388,10 +548,29 @@ public class GameController implements NetworkService.ServerListener {
         alert.setTitle(title);
         alert.setHeaderText(null);
         alert.setContentText(content);
-        try { // Evita eccezioni se la scena non è pronta
-            Stage owner = (Stage) gridPaneBoard.getScene().getWindow();
-            alert.initOwner(owner);
-        } catch (Exception e) { System.err.println("Could not set owner for Error alert: "+e.getMessage()); }
+        try {
+            Stage owner = getCurrentStage();
+            if (owner != null) alert.initOwner(owner);
+        } catch (Exception e) { System.err.println("Error getting owner stage for error alert: "+e.getMessage());}
         alert.showAndWait();
+    }
+
+    // Helper per ottenere lo stage corrente in modo più sicuro
+    private Stage getCurrentStage() {
+        try {
+            if (gridPane != null && gridPane.getScene() != null && gridPane.getScene().getWindow() instanceof Stage) {
+                return (Stage) gridPane.getScene().getWindow();
+            }
+            // Fallback: cerca la prima finestra visibile
+            return Stage.getWindows().stream()
+                    .filter(Window::isShowing)
+                    .filter(w -> w instanceof Stage)
+                    .map(w -> (Stage)w)
+                    .findFirst()
+                    .orElse(null);
+        } catch (Exception e) {
+            System.err.println("Exception trying to get current stage: " + e.getMessage());
+            return null;
+        }
     }
 }
