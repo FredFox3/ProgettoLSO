@@ -46,7 +46,6 @@ typedef struct {
     int current_turn_fd; // FD del giocatore di turno
     char player1_name[MAX_NAME_LEN];
     char player2_name[MAX_NAME_LEN];
-    // Aggiungere qui info sul creatore se serve per Accetta/Rifiuta
 } GameInfo;
 
 // Info Client
@@ -65,7 +64,6 @@ int server_fd = -1;
 volatile sig_atomic_t keep_running = 1;
 int next_game_id = 1; // Contatore per ID univoci partite
 
-// Mutex per proteggere l'accesso alle liste globali
 pthread_mutex_t client_list_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t game_list_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -101,9 +99,7 @@ void init_board(Cell board[3][3]) {
     memset(board, CELL_EMPTY, sizeof(Cell) * 3 * 3);
 }
 
-// Converte la board in una stringa per l'invio
 void board_to_string(Cell board[3][3], char *out_str, size_t max_len) {
-    // Formato semplice: "X O EMPTY..." separati da spazio
     out_str[0] = '\0';
     for (int r = 0; r < 3; ++r) {
         for (int c = 0; c < 3; ++c) {
@@ -111,9 +107,9 @@ void board_to_string(Cell board[3][3], char *out_str, size_t max_len) {
             switch (board[r][c]) {
                 case CELL_X: cell_char = 'X'; break;
                 case CELL_O: cell_char = 'O'; break;
-                default:     strcpy(out_str + strlen(out_str), "EMPTY"); goto next_cell; // Usa strcpy per EMPTY
+                default:     strcpy(out_str + strlen(out_str), "EMPTY"); goto next_cell;
             }
-            char cell_str[3]; // Abbastanza per "X " o "O "
+            char cell_str[3];
             snprintf(cell_str, sizeof(cell_str), "%c", cell_char);
             strncat(out_str, cell_str, max_len - strlen(out_str) -1);
 
@@ -127,7 +123,6 @@ void board_to_string(Cell board[3][3], char *out_str, size_t max_len) {
 
 
 bool check_winner(Cell board[3][3], Cell player) {
-    // (Codice check_winner originale adattato per CELL_*)
      for (int i = 0; i < 3; i++) {
         if (board[i][0] == player && board[i][1] == player && board[i][2] == player) return true;
         if (board[0][i] == player && board[1][i] == player && board[2][i] == player) return true;
@@ -138,18 +133,16 @@ bool check_winner(Cell board[3][3], Cell player) {
 }
 
 bool board_full(Cell board[3][3]) {
-    // (Codice board_full originale adattato per CELL_*)
     for (int i = 0; i < 3; i++)
         for (int j = 0; j < 3; j++)
             if (board[i][j] == CELL_EMPTY) return false;
     return true;
 }
 
-// Invia un messaggio a un client specifico (thread-safe se fd è valido)
-// Ritorna false in caso di errore di invio
 bool send_to_client(int client_fd, const char* message) {
     if (client_fd < 0) return false;
-    LOG("DEBUG: Sending to fd %d: [%s]\n", client_fd, message);
+    // Evita log eccessivi per messaggi di conferma opzionali
+    // LOG("DEBUG: Sending to fd %d: [%s]\n", client_fd, message);
     ssize_t bytes_sent = send(client_fd, message, strlen(message), MSG_NOSIGNAL);
     if (bytes_sent <= 0) {
         if (bytes_sent == 0 || errno == EPIPE || errno == ECONNRESET) {
@@ -162,7 +155,6 @@ bool send_to_client(int client_fd, const char* message) {
     return true;
 }
 
-// Trova un client tramite fd (necessita mutex esternamente se si modifica la lista)
 int find_client_index(int fd) {
     for (int i = 0; i < MAX_TOTAL_CLIENTS; ++i) {
         if (clients[i].active && clients[i].fd == fd) {
@@ -172,7 +164,6 @@ int find_client_index(int fd) {
     return -1;
 }
 
-// Trova una partita tramite id (necessita mutex esternamente se si modifica la lista)
 int find_game_index(int game_id) {
      if (game_id <= 0) return -1;
     for (int i = 0; i < MAX_GAMES; ++i) {
@@ -187,7 +178,7 @@ int find_game_index(int game_id) {
 // --- Logica di Gestione Client (Eseguita in un Thread Separato) ---
 void *handle_client(void *arg) {
     int client_index = *((int*)arg);
-    free(arg); // Libera memoria allocata per passare l'indice
+    free(arg);
 
     int client_fd = clients[client_index].fd;
     char buffer[BUFFER_SIZE];
@@ -196,9 +187,8 @@ void *handle_client(void *arg) {
 
     LOG("Thread started for client fd %d (index %d)\n", client_fd, client_index);
 
-    // 1. Richiedi il nome al client
     if (!send_to_client(client_fd, "CMD:GET_NAME\n")) {
-         client_connected = false; // Errore invio, chiudi subito
+         client_connected = false;
     }
 
     while (client_connected && keep_running) {
@@ -214,37 +204,35 @@ void *handle_client(void *arg) {
                 LOG("Read error from client fd %d (index %d, name %s): %s\n", client_fd, client_index, clients[client_index].name, strerror(errno));
             }
             client_connected = false;
-            break; // Esce dal ciclo while
+            break;
         }
 
-        // Rimuovi newline finale se presente
         buffer[strcspn(buffer, "\r\n")] = 0;
         LOG("Received from fd %d (index %d, name '%s', state %d): [%s]\n",
             client_fd, client_index, clients[client_index].name, clients[client_index].state, buffer);
 
         // --- Parsing del Comando ---
-        // Blocco i mutex solo quando necessario per accedere/modificare dati condivisi
 
-        // Comando: NAME <nome> (inviato solo una volta all'inizio)
+        // Comando: NAME <nome>
         if (strncmp(buffer, "NAME ", 5) == 0 && clients[client_index].state == CLIENT_STATE_CONNECTED) {
             pthread_mutex_lock(&client_list_mutex);
             strncpy(clients[client_index].name, buffer + 5, MAX_NAME_LEN - 1);
-            clients[client_index].name[MAX_NAME_LEN - 1] = '\0'; // Assicura null termination
+            clients[client_index].name[MAX_NAME_LEN - 1] = '\0';
             clients[client_index].state = CLIENT_STATE_LOBBY;
             LOG("Client fd %d registered name: %s\n", client_fd, clients[client_index].name);
-             send_to_client(client_fd, "RESP:NAME_OK\n"); // Conferma ricezione nome
+             send_to_client(client_fd, "RESP:NAME_OK\n");
             pthread_mutex_unlock(&client_list_mutex);
         }
-        // Comando: LIST (richiede lista partite in attesa)
+        // Comando: LIST
         else if (strcmp(buffer, "LIST") == 0 && clients[client_index].state == CLIENT_STATE_LOBBY) {
             response[0] = '\0';
-            strcat(response, "RESP:GAMES_LIST;"); // Inizia la risposta
+            strcat(response, "RESP:GAMES_LIST;");
             bool first = true;
 
             pthread_mutex_lock(&game_list_mutex);
             for (int i = 0; i < MAX_GAMES; ++i) {
                 if (games[i].state == GAME_STATE_WAITING) {
-                    if (!first) strcat(response, "|"); // Separatore tra partite
+                    if (!first) strcat(response, "|");
                     char game_info[100];
                     snprintf(game_info, sizeof(game_info), "%d,%s", games[i].id, games[i].player1_name);
                     strcat(response, game_info);
@@ -253,14 +241,13 @@ void *handle_client(void *arg) {
             }
             pthread_mutex_unlock(&game_list_mutex);
 
-            strcat(response, "\n"); // Fine messaggio
+            strcat(response, "\n");
             if (!send_to_client(client_fd, response)) client_connected = false;
         }
-        // Comando: CREATE (crea una nuova partita)
+        // Comando: CREATE
         else if (strcmp(buffer, "CREATE") == 0 && clients[client_index].state == CLIENT_STATE_LOBBY) {
             int game_idx = -1;
             pthread_mutex_lock(&game_list_mutex);
-            // Trova uno slot libero
             for (int i = 0; i < MAX_GAMES; ++i) {
                 if (games[i].state == GAME_STATE_EMPTY) {
                     game_idx = i;
@@ -274,11 +261,10 @@ void *handle_client(void *arg) {
                 init_board(games[game_idx].board);
                 games[game_idx].player1_fd = client_fd;
                 games[game_idx].player2_fd = -1;
-                games[game_idx].current_turn_fd = -1; // Nessuno gioca ancora
+                games[game_idx].current_turn_fd = -1;
                 strncpy(games[game_idx].player1_name, clients[client_index].name, MAX_NAME_LEN);
                 games[game_idx].player2_name[0] = '\0';
 
-                // Aggiorna lo stato del client
                 pthread_mutex_lock(&client_list_mutex);
                 clients[client_index].state = CLIENT_STATE_WAITING;
                 clients[client_index].game_id = games[game_idx].id;
@@ -292,46 +278,38 @@ void *handle_client(void *arg) {
             }
             pthread_mutex_unlock(&game_list_mutex);
             if (!send_to_client(client_fd, response)) client_connected = false;
-
-             // TODO: Notificare gli altri client in LOBBY della nuova partita (opzionale)
-
         }
-        // Comando: JOIN <id> (unisciti a una partita)
+        // Comando: JOIN <id>
         else if (strncmp(buffer, "JOIN ", 5) == 0 && clients[client_index].state == CLIENT_STATE_LOBBY) {
             int game_id_to_join = atoi(buffer + 5);
             int game_idx = -1;
             int player1_idx = -1;
 
             pthread_mutex_lock(&game_list_mutex);
-            pthread_mutex_lock(&client_list_mutex); // Blocca entrambe le liste
+            pthread_mutex_lock(&client_list_mutex);
 
             game_idx = find_game_index(game_id_to_join);
 
             if (game_idx != -1 && games[game_idx].state == GAME_STATE_WAITING && games[game_idx].player1_fd != client_fd) {
-                // Partita trovata e in attesa, e non è quella creata da me stesso
                 player1_idx = find_client_index(games[game_idx].player1_fd);
 
                 if (player1_idx != -1) {
-                    // Aggiorna la partita
                     games[game_idx].player2_fd = client_fd;
                     strncpy(games[game_idx].player2_name, clients[client_index].name, MAX_NAME_LEN);
                     games[game_idx].state = GAME_STATE_IN_PROGRESS;
-                    games[game_idx].current_turn_fd = games[game_idx].player1_fd; // Creatore inizia (X)
+                    games[game_idx].current_turn_fd = games[game_idx].player1_fd;
 
-                    // Aggiorna stato dei client
                     clients[client_index].state = CLIENT_STATE_PLAYING;
                     clients[client_index].game_id = game_id_to_join;
-                    clients[player1_idx].state = CLIENT_STATE_PLAYING; // Anche il creatore passa a PLAYING
+                    clients[player1_idx].state = CLIENT_STATE_PLAYING;
 
                     LOG("Client %s (fd %d) joined game %d (index %d) created by %s (fd %d)\n",
                         clients[client_index].name, client_fd, game_id_to_join, game_idx,
                         games[game_idx].player1_name, games[game_idx].player1_fd);
 
-                    // Invia notifiche di inizio partita
                     char board_str[BUFFER_SIZE];
                     board_to_string(games[game_idx].board, board_str, sizeof(board_str));
 
-                    // A chi si è unito (O)
                     snprintf(response, sizeof(response), "RESP:JOIN_OK %d O %s\n", game_id_to_join, games[game_idx].player1_name);
                     if (!send_to_client(client_fd, response)) client_connected = false;
                     snprintf(response, sizeof(response), "NOTIFY:GAME_START %d O %s\n", game_id_to_join, games[game_idx].player1_name);
@@ -340,28 +318,24 @@ void *handle_client(void *arg) {
                      if (!send_to_client(client_fd, response)) client_connected = false;
 
 
-                    // Al creatore (X)
                     snprintf(response, sizeof(response), "NOTIFY:GAME_START %d X %s\n", game_id_to_join, clients[client_index].name);
                      if (!send_to_client(games[game_idx].player1_fd, response)) { /* Gestire errore invio? */ }
                      snprintf(response, sizeof(response), "NOTIFY:BOARD %s\n", board_str);
                      if (!send_to_client(games[game_idx].player1_fd, response)) { /* Gestire errore invio? */ }
                      if (!send_to_client(games[game_idx].player1_fd, "NOTIFY:YOUR_TURN\n")) { /* Gestire errore invio? */ }
 
-
                 } else {
-                     // Errore: creatore non trovato (incongruenza dati)
                     snprintf(response, sizeof(response), "ERROR:Game creator not found for game %d\n", game_id_to_join);
                      if (!send_to_client(client_fd, response)) client_connected = false;
                      LOG("ERROR: Creator (fd %d) for game %d not found in client list!\n", games[game_idx].player1_fd, game_id_to_join);
                 }
 
             } else {
-                // Partita non trovata o non disponibile
                  if (game_idx != -1 && games[game_idx].player1_fd == client_fd) {
                      snprintf(response, sizeof(response), "ERROR:Cannot join your own game %d\n", game_id_to_join);
-                 } else if (game_idx != -1) { // Trovata ma non in attesa
+                 } else if (game_idx != -1) {
                      snprintf(response, sizeof(response), "ERROR:Game %d is not waiting for players\n", game_id_to_join);
-                 } else { // Non trovata
+                 } else {
                     snprintf(response, sizeof(response), "ERROR:Game %d not found\n", game_id_to_join);
                  }
                 if (!send_to_client(client_fd, response)) client_connected = false;
@@ -370,7 +344,7 @@ void *handle_client(void *arg) {
             pthread_mutex_unlock(&client_list_mutex);
             pthread_mutex_unlock(&game_list_mutex);
         }
-         // Comando: MOVE <r> <c> (effettua una mossa)
+         // Comando: MOVE <r> <c>
         else if (strncmp(buffer, "MOVE ", 5) == 0 && clients[client_index].state == CLIENT_STATE_PLAYING) {
             int r, c;
             if (sscanf(buffer + 5, "%d %d", &r, &c) == 2) {
@@ -379,7 +353,7 @@ void *handle_client(void *arg) {
                 Cell my_symbol = CELL_EMPTY;
                 bool move_ok = false;
                 bool game_ended = false;
-                char end_reason[20] = ""; // "WIN", "LOSE", "DRAW"
+                char end_reason[20] = "";
 
                 pthread_mutex_lock(&game_list_mutex);
                 game_idx = find_game_index(clients[client_index].game_id);
@@ -387,13 +361,11 @@ void *handle_client(void *arg) {
                 if (game_idx != -1 && games[game_idx].state == GAME_STATE_IN_PROGRESS) {
                     if (games[game_idx].current_turn_fd == client_fd) {
                         if (r >= 0 && r < 3 && c >= 0 && c < 3 && games[game_idx].board[r][c] == CELL_EMPTY) {
-                            // Mossa valida
                             my_symbol = (client_fd == games[game_idx].player1_fd) ? CELL_X : CELL_O;
                             games[game_idx].board[r][c] = my_symbol;
                             move_ok = true;
                             LOG("Player %s (fd %d) made move %d,%d in game %d\n", clients[client_index].name, client_fd, r, c, clients[client_index].game_id);
 
-                            // Controlla fine partita
                             if (check_winner(games[game_idx].board, my_symbol)) {
                                 game_ended = true;
                                 strcpy(end_reason, "WIN");
@@ -406,12 +378,11 @@ void *handle_client(void *arg) {
                                 LOG("Game %d finished. Draw.\n", clients[client_index].game_id);
                             }
 
-                            // Determina avversario e cambia turno se la partita continua
                              opponent_fd = (client_fd == games[game_idx].player1_fd) ? games[game_idx].player2_fd : games[game_idx].player1_fd;
                             if (!game_ended) {
                                 games[game_idx].current_turn_fd = opponent_fd;
                             } else {
-                                games[game_idx].current_turn_fd = -1; // Nessuno gioca più
+                                games[game_idx].current_turn_fd = -1;
                             }
 
                         } else {
@@ -427,26 +398,20 @@ void *handle_client(void *arg) {
                      if (!send_to_client(client_fd, response)) client_connected = false;
                 }
 
-                // Se la mossa è stata valida, invia aggiornamenti
                 if (move_ok) {
                     char board_str[BUFFER_SIZE];
                     board_to_string(games[game_idx].board, board_str, sizeof(board_str));
 
-                    // Invia board aggiornata a entrambi
                     snprintf(response, sizeof(response), "NOTIFY:BOARD %s\n", board_str);
                     if (!send_to_client(client_fd, response)) client_connected = false;
                     if (opponent_fd != -1) send_to_client(opponent_fd, response);
 
                     if (game_ended) {
-                         // Invia risultato partita a entrambi
-                         // A chi ha fatto la mossa
                          snprintf(response, sizeof(response), "NOTIFY:GAMEOVER %s\n", (strcmp(end_reason,"WIN")==0) ? "WIN" : "DRAW");
                          if (!send_to_client(client_fd, response)) client_connected = false;
-                         // All'avversario
                          snprintf(response, sizeof(response), "NOTIFY:GAMEOVER %s\n", (strcmp(end_reason,"WIN")==0) ? "LOSE" : "DRAW");
                           if (opponent_fd != -1) send_to_client(opponent_fd, response);
 
-                        // Riporta i client alla Lobby
                         pthread_mutex_lock(&client_list_mutex);
                          clients[client_index].state = CLIENT_STATE_LOBBY;
                          clients[client_index].game_id = 0;
@@ -457,15 +422,12 @@ void *handle_client(void *arg) {
                          }
                         pthread_mutex_unlock(&client_list_mutex);
 
-                        // Resetta lo slot partita (opzionale, potrebbe essere riutilizzato per rematch)
-                         games[game_idx].state = GAME_STATE_EMPTY; // Semplice reset per ora
+                         games[game_idx].state = GAME_STATE_EMPTY;
 
                     } else {
-                        // Invia notifica di turno all'avversario
                          if (opponent_fd != -1) send_to_client(opponent_fd, "NOTIFY:YOUR_TURN\n");
                     }
                 }
-
                 pthread_mutex_unlock(&game_list_mutex);
 
             } else {
@@ -474,13 +436,77 @@ void *handle_client(void *arg) {
             }
         }
          // Comando: QUIT (abbandona partita/lobby)
+         // --- MODIFICATO ---
          else if (strcmp(buffer, "QUIT") == 0) {
-             LOG("Client %s (fd %d) requested QUIT.\n", clients[client_index].name, client_fd);
-             client_connected = false; // Forza uscita dal loop e cleanup
+             LOG("Client %s (fd %d) requested QUIT. Current state: %d\n", clients[client_index].name, client_fd, clients[client_index].state);
+
+             ClientState currentState;
+             pthread_mutex_lock(&client_list_mutex); // Lock to read state safely
+             currentState = clients[client_index].state;
+             pthread_mutex_unlock(&client_list_mutex);
+
+             // Se in partita (PLAYING o WAITING), lascia la partita e torna alla lobby
+             if (currentState == CLIENT_STATE_PLAYING || currentState == CLIENT_STATE_WAITING) {
+                 LOG("Client %s (fd %d) is leaving game %d and returning to lobby.\n", clients[client_index].name, client_fd, clients[client_index].game_id);
+                 int game_to_leave_id = clients[client_index].game_id; // Ottieni ID prima di resettare
+
+                 pthread_mutex_lock(&client_list_mutex);
+                 pthread_mutex_lock(&game_list_mutex);
+
+                 int game_idx = find_game_index(game_to_leave_id);
+                 if (game_idx != -1 && (games[game_idx].state == GAME_STATE_WAITING || games[game_idx].state == GAME_STATE_IN_PROGRESS)) {
+                      int opponent_fd = -1;
+                      if (games[game_idx].player1_fd == client_fd) {
+                          opponent_fd = games[game_idx].player2_fd;
+                      } else if (games[game_idx].player2_fd == client_fd) {
+                          opponent_fd = games[game_idx].player1_fd;
+                      }
+
+                     // Notifica avversario
+                     if (opponent_fd != -1) {
+                         send_to_client(opponent_fd, "NOTIFY:OPPONENT_LEFT\n");
+                         int opponent_idx = find_client_index(opponent_fd);
+                         if (opponent_idx != -1) {
+                             clients[opponent_idx].state = CLIENT_STATE_LOBBY; // Riporta avversario a LOBBY
+                             clients[opponent_idx].game_id = 0;
+                             LOG("Opponent %s (fd %d) moved back to LOBBY.\n", clients[opponent_idx].name, opponent_fd);
+                         }
+                     }
+
+                     // Resetta stato partita
+                     games[game_idx].state = GAME_STATE_EMPTY;
+                     games[game_idx].player1_fd = -1;
+                     games[game_idx].player2_fd = -1;
+                     games[game_idx].player1_name[0] = '\0';
+                     games[game_idx].player2_name[0] = '\0';
+                     games[game_idx].current_turn_fd = -1;
+                     LOG("Game %d (index %d) reset due to player leaving.\n", game_to_leave_id, game_idx);
+                 } else {
+                      LOG("Client %s (fd %d) sent QUIT while in game %d, but game not found or finished.\n", clients[client_index].name, client_fd, game_to_leave_id);
+                 }
+
+                 // Muovi il client corrente a LOBBY
+                 clients[client_index].state = CLIENT_STATE_LOBBY;
+                 clients[client_index].game_id = 0;
+
+                 pthread_mutex_unlock(&game_list_mutex);
+                 pthread_mutex_unlock(&client_list_mutex);
+
+                 // Invia conferma (opzionale, ma aiuta il client a sapere che è tornato in lobby)
+                 // send_to_client(client_fd, "RESP:LEFT_GAME_OK\n");
+
+                 // --- NON DISCONNETTERE IL CLIENT QUI ---
+
+             } else {
+                 // Se già in Lobby o Connesso, QUIT significa disconnettere la sessione
+                 LOG("Client %s (fd %d) sent QUIT from lobby/connected state. Disconnecting session.\n", clients[client_index].name, client_fd);
+                 client_connected = false; // Forza uscita dal loop e cleanup
+             }
+             // --- FINE MODIFICA ---
          }
         // Comando non riconosciuto
         else {
-            if (clients[client_index].state != CLIENT_STATE_CONNECTED) { // Ignora se non ha ancora mandato il nome
+            if (clients[client_index].state != CLIENT_STATE_CONNECTED) {
                  snprintf(response, sizeof(response), "ERROR:Unknown command or invalid state for command: %s\n", buffer);
                  if (!send_to_client(client_fd, response)) client_connected = false;
             }
@@ -489,48 +515,52 @@ void *handle_client(void *arg) {
 
     // --- Cleanup del Client ---
     LOG("Cleaning up client fd %d (index %d, name '%s')\n", client_fd, client_index, clients[client_index].name);
-    close(client_fd); // Chiudi socket
+    close(client_fd);
 
     pthread_mutex_lock(&client_list_mutex);
-    pthread_mutex_lock(&game_list_mutex); // Blocca entrambe per sicurezza
+    pthread_mutex_lock(&game_list_mutex);
 
     int game_id = clients[client_index].game_id;
-    clients[client_index].active = false; // Libera lo slot client
+    clients[client_index].active = false;
     clients[client_index].fd = -1;
     clients[client_index].game_id = 0;
-    clients[client_index].state = CLIENT_STATE_CONNECTED; // Reset state
+    clients[client_index].state = CLIENT_STATE_CONNECTED;
     clients[client_index].name[0] = '\0';
 
-    // Se il client era in una partita, gestisci l'abbandono
+    // Se il client si disconnette (non per QUIT da LOBBY) mentre era in una partita
     if (game_id > 0) {
         int game_idx = find_game_index(game_id);
+        // Controlla se la partita esiste ancora (potrebbe essere stata resettata da un QUIT precedente)
         if (game_idx != -1 && (games[game_idx].state == GAME_STATE_WAITING || games[game_idx].state == GAME_STATE_IN_PROGRESS)) {
-            LOG("Client was in game %d (index %d). Notifying opponent and cleaning up game.\n", game_id, game_idx);
-            int opponent_fd = -1;
-            if (games[game_idx].player1_fd == client_fd && games[game_idx].player2_fd != -1) {
-                opponent_fd = games[game_idx].player2_fd;
-            } else if (games[game_idx].player2_fd == client_fd && games[game_idx].player1_fd != -1) {
-                opponent_fd = games[game_idx].player1_fd;
-            }
-
-             // Notifica l'avversario (se esiste ed è ancora connesso)
-             if (opponent_fd != -1) {
-                 send_to_client(opponent_fd, "NOTIFY:OPPONENT_LEFT\n");
-                 // Riporta l'avversario alla lobby
-                 int opponent_idx = find_client_index(opponent_fd);
-                 if (opponent_idx != -1) {
-                     clients[opponent_idx].state = CLIENT_STATE_LOBBY;
-                     clients[opponent_idx].game_id = 0;
-                     LOG("Opponent %s (fd %d) moved back to LOBBY.\n", clients[opponent_idx].name, opponent_fd);
+            // Verifica se il client disconnesso era effettivamente in questa partita
+            // (potrebbe esserci una race condition se il gioco viene resettato tra il check e l'azione)
+            if (games[game_idx].player1_fd == client_fd || games[game_idx].player2_fd == client_fd) {
+                 LOG("Client disconnected while in game %d (index %d). Notifying opponent and cleaning up game.\n", game_id, game_idx);
+                 int opponent_fd = -1;
+                 if (games[game_idx].player1_fd == client_fd && games[game_idx].player2_fd != -1) {
+                     opponent_fd = games[game_idx].player2_fd;
+                 } else if (games[game_idx].player2_fd == client_fd && games[game_idx].player1_fd != -1) {
+                     opponent_fd = games[game_idx].player1_fd;
                  }
-             }
 
-            // Pulisci/Resetta la partita
-             games[game_idx].state = GAME_STATE_EMPTY; // O potresti metterla in uno stato "ABBANDONATA"
-             games[game_idx].player1_fd = -1;
-             games[game_idx].player2_fd = -1;
-             // ... reset altri campi ...
-             LOG("Game %d (index %d) reset due to player leaving.\n", game_id, game_idx);
+                 if (opponent_fd != -1) {
+                     send_to_client(opponent_fd, "NOTIFY:OPPONENT_LEFT\n");
+                     int opponent_idx = find_client_index(opponent_fd);
+                     if (opponent_idx != -1) {
+                         clients[opponent_idx].state = CLIENT_STATE_LOBBY;
+                         clients[opponent_idx].game_id = 0;
+                         LOG("Opponent %s (fd %d) moved back to LOBBY due to disconnect.\n", clients[opponent_idx].name, opponent_fd);
+                     }
+                 }
+
+                 games[game_idx].state = GAME_STATE_EMPTY;
+                 games[game_idx].player1_fd = -1;
+                 games[game_idx].player2_fd = -1;
+                 games[game_idx].player1_name[0] = '\0';
+                 games[game_idx].player2_name[0] = '\0';
+                 games[game_idx].current_turn_fd = -1;
+                 LOG("Game %d (index %d) reset due to player disconnect.\n", game_id, game_idx);
+            }
         }
     }
 
@@ -545,16 +575,12 @@ void *handle_client(void *arg) {
 // --- Funzione Gestione Segnali ---
 void handle_signal(int signal) {
     keep_running = 0;
-    // Scrittura sicura da signal handler (evita printf)
     char msg[] = "\n!!! Signal received, initiating server shutdown... !!!\n";
     write(STDOUT_FILENO, msg, strlen(msg));
-    // Potrebbe essere necessario svegliare il thread principale se bloccato su accept
-    // inviando un segnale a se stesso o chiudendo il server_fd da qui (con cautela).
-    // Per semplicità, confidiamo che accept si sblocchi o che il loop principale termini.
      if (server_fd != -1) {
-         shutdown(server_fd, SHUT_RDWR); // Tenta di sbloccare accept
-         close(server_fd); // Chiude il socket di ascolto
-         server_fd = -1;   // Impedisce riutilizzo in cleanup
+         shutdown(server_fd, SHUT_RDWR);
+         close(server_fd);
+         server_fd = -1;
      }
 }
 
@@ -563,29 +589,25 @@ void handle_signal(int signal) {
 void cleanup() {
     LOG("Cleaning up resources...\n");
 
-    // Invia messaggio di shutdown ai client attivi e chiudi connessioni
     pthread_mutex_lock(&client_list_mutex);
     for (int i = 0; i < MAX_TOTAL_CLIENTS; i++) {
         if (clients[i].active && clients[i].fd != -1) {
             send_to_client(clients[i].fd, "NOTIFY:SERVER_SHUTDOWN\n");
             close(clients[i].fd);
-            clients[i].fd = -1; // Marca come chiuso
+            clients[i].fd = -1;
              LOG("Closed connection for client %d (name: %s)\n", i , clients[i].name);
         }
-        clients[i].active = false; // Resetta comunque lo stato
+        clients[i].active = false;
     }
      pthread_mutex_unlock(&client_list_mutex);
 
-    // Il server_fd potrebbe essere già stato chiuso dall'handler del segnale
     if (server_fd != -1) {
         close(server_fd);
         server_fd = -1;
     }
 
-     // Distruggi i mutex
      pthread_mutex_destroy(&client_list_mutex);
      pthread_mutex_destroy(&game_list_mutex);
-
 
     LOG("Server stopped.\n");
 }
@@ -595,17 +617,14 @@ int main() {
     struct sockaddr_in address;
     int addrlen = sizeof(address);
 
-    // Imposta gestione segnali
     struct sigaction action;
     memset(&action, 0, sizeof(action));
     action.sa_handler = handle_signal;
     sigaction(SIGINT, &action, NULL);
     sigaction(SIGTERM, &action, NULL);
-    // Ignora SIGPIPE per gestire errori di send/write nel codice
     signal(SIGPIPE, SIG_IGN);
 
 
-    // Inizializza liste client e partite
     pthread_mutex_lock(&client_list_mutex);
     for(int i=0; i<MAX_TOTAL_CLIENTS; ++i) clients[i].active = false;
     pthread_mutex_unlock(&client_list_mutex);
@@ -615,7 +634,6 @@ int main() {
     pthread_mutex_unlock(&game_list_mutex);
 
 
-    // --- Setup Socket Server ---
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
         LOG_PERROR("socket failed");
         exit(EXIT_FAILURE);
@@ -632,7 +650,7 @@ int main() {
         close(server_fd);
         exit(EXIT_FAILURE);
     }
-    if (listen(server_fd, MAX_TOTAL_CLIENTS) < 0) { // Metti in coda fino a MAX_TOTAL_CLIENTS
+    if (listen(server_fd, MAX_TOTAL_CLIENTS) < 0) {
         LOG_PERROR("listen failed");
         close(server_fd);
         exit(EXIT_FAILURE);
@@ -640,7 +658,6 @@ int main() {
 
     LOG("Server listening on port %d... (Max Clients: %d, Max Games: %d)\n", PORT, MAX_TOTAL_CLIENTS, MAX_GAMES);
 
-    // --- Ciclo Accettazione Connessioni ---
     while (keep_running) {
         int new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen);
 
@@ -650,13 +667,12 @@ int main() {
             } else if (errno != EINTR) {
                  LOG_PERROR("accept failed");
             }
-             if (!keep_running) break; // Esce se il server si sta fermando
-            continue; // Prova ad accettare di nuovo se non è errore grave o shutdown
+             if (!keep_running) break;
+            continue;
         }
 
         LOG("New connection accepted, assigning fd %d\n", new_socket);
 
-        // Trova uno slot client libero e avvia il thread handler
         pthread_mutex_lock(&client_list_mutex);
         int client_index = -1;
         for (int i = 0; i < MAX_TOTAL_CLIENTS; ++i) {
@@ -674,11 +690,11 @@ int main() {
             clients[client_index].name[0] = '\0';
 
             pthread_t thread_id;
-            int *p_client_index = malloc(sizeof(int)); // Alloca memoria per passare l'indice al thread
+            int *p_client_index = malloc(sizeof(int));
              if (p_client_index == NULL) {
                  LOG_PERROR("Failed to allocate memory for thread arg");
                  close(new_socket);
-                 clients[client_index].active = false; // Libera lo slot
+                 clients[client_index].active = false;
                  pthread_mutex_unlock(&client_list_mutex);
                  continue;
              }
@@ -687,10 +703,10 @@ int main() {
             if (pthread_create(&thread_id, NULL, handle_client, p_client_index) != 0) {
                 LOG_PERROR("pthread_create failed");
                 close(new_socket);
-                clients[client_index].active = false; // Libera slot
-                 free(p_client_index); // Libera memoria se create fallisce
+                clients[client_index].active = false;
+                 free(p_client_index);
             } else {
-                pthread_detach(thread_id); // Non aspettiamo la terminazione del thread qui
+                pthread_detach(thread_id);
                  LOG("Client assigned to index %d, handler thread created.\n", client_index);
             }
         } else {

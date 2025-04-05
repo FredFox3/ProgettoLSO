@@ -13,18 +13,18 @@ import javafx.scene.control.Label;
 import javafx.scene.control.TextInputDialog;
 import javafx.scene.layout.FlowPane;
 import javafx.stage.Stage;
-import javafx.stage.Window; // Importa Window
+import javafx.stage.Window;
 
 
 import java.io.IOException;
 import java.net.URL;
-import java.util.Arrays; // Import per log cache
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.ResourceBundle;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.concurrent.atomic.AtomicBoolean; // Per gestire stato navigazione
+import java.util.concurrent.atomic.AtomicBoolean;
 
 
 public class HomePageController implements Initializable, NetworkService.ServerListener {
@@ -33,15 +33,15 @@ public class HomePageController implements Initializable, NetworkService.ServerL
     @FXML private FlowPane flowPanePartite;
     @FXML private Label labelStatus;
 
-    // Usa una variabile statica per NetworkService e PlayerName
-    public static NetworkService networkServiceInstance; // Reso public static
-    public static String staticPlayerName;             // Reso public static
-    private Stage currentStage; // Riferimento allo stage corrente
+    public static NetworkService networkServiceInstance;
+    public static String staticPlayerName;
+    private Stage currentStage;
 
-    // Cache temporanea per messaggi ricevuti durante la transizione a GameController
-    private volatile String[] cachedBoardDuringNavigation = null; // volatile per visibilità tra thread
-    private final AtomicBoolean cachedTurnDuringNavigation = new AtomicBoolean(false); // atomic per thread-safety
-    private final AtomicBoolean isNavigatingToGame = new AtomicBoolean(false); // Flag per indicare transizione
+    private volatile String[] cachedBoardDuringNavigation = null;
+    private final AtomicBoolean cachedTurnDuringNavigation = new AtomicBoolean(false);
+    private final AtomicBoolean isNavigatingToGame = new AtomicBoolean(false);
+
+    private static volatile String lastReturnReason = null;
 
     private static final DateTimeFormatter TIMESTAMP_FORMATTER =
             DateTimeFormatter.ofPattern("HH:mm:ss.SSS");
@@ -53,16 +53,17 @@ public class HomePageController implements Initializable, NetworkService.ServerL
 
     @Override
     public void initialize(URL url, ResourceBundle resourceBundle) {
-        System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): initialize CALLED");
-        // Resetta cache e flag navigazione all'inizializzazione
+        System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): initialize CALLED. LastReturnReason: " + lastReturnReason);
         cachedBoardDuringNavigation = null;
         cachedTurnDuringNavigation.set(false);
         isNavigatingToGame.set(false);
 
+        String returnReason = lastReturnReason;
+        lastReturnReason = null; // Consuma
+
         Platform.runLater(() -> {
-            System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): initialize (runLater) START");
-            // Tenta di ottenere lo Stage qui
-            if (currentStage == null && flowPanePartite != null && flowPanePartite.getScene() != null) {
+            System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): initialize (runLater) START. Consumed ReturnReason: " + returnReason);
+            if (currentStage == null && (flowPanePartite != null && flowPanePartite.getScene() != null)) {
                 currentStage = (Stage) flowPanePartite.getScene().getWindow();
                 System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): Stage obtained in runLater: " + (currentStage != null));
             } else if(currentStage == null) {
@@ -71,45 +72,71 @@ public class HomePageController implements Initializable, NetworkService.ServerL
             }
 
             if (networkServiceInstance == null) {
+                // Primo avvio o dopo errore grave
                 System.out.println(getCurrentTimestamp() + " - Initializing: NetworkService is null, creating and connecting...");
-                networkServiceInstance = new NetworkService();
                 labelStatus.setText("Connecting...");
                 buttonCreaPartita.setDisable(true);
                 if (flowPanePartite != null) flowPanePartite.getChildren().clear();
                 askForNameAndConnect();
             } else {
-                System.out.println(getCurrentTimestamp() + " - Initializing: NetworkService exists. Is connected: " + networkServiceInstance.isConnected());
-                labelStatus.setText("Loading...");
-                if (networkServiceInstance.isConnected()) {
-                    System.out.println(getCurrentTimestamp() + " - Initializing: Preparing for return (connected).");
-                    prepareForReturn("Returned to Lobby.");
+                // Istanza NetworkService esistente
+                boolean isConnected = networkServiceInstance.isConnected();
+                System.out.println(getCurrentTimestamp() + " - Initializing: NetworkService exists. Is connected: " + isConnected);
+                String statusMsgForPrepare = "Returned to Lobby."; // Default
+
+                if (isConnected) {
+                    // --- CASO NORMALE: Connesso (include ritorno da partita senza disconnessione) ---
+                    System.out.println(getCurrentTimestamp() + " - Initializing: Preparing for return (connected). Reason: " + returnReason);
+                    if (returnReason != null) { // Usa il motivo specifico se disponibile
+                        statusMsgForPrepare = returnReason;
+                    }
+                    prepareForReturn(statusMsgForPrepare);
+
                 } else {
-                    System.err.println(getCurrentTimestamp() + " - Initializing: NetworkService exists but is NOT connected. Resetting...");
-                    networkServiceInstance = null; // Resetta per forzare nuova connessione
-                    staticPlayerName = null;
-                    labelStatus.setText("Connection lost. Please restart.");
-                    buttonCreaPartita.setDisable(true);
-                    if (flowPanePartite != null) flowPanePartite.getChildren().clear();
-                    // askForNameAndConnect(); // Potresti tentare riconnessione
+                    // --- CASO DISCONNESSO ---
+                    // Controlla se la disconnessione era dovuta alla chiusura della finestra precedente
+                    boolean windowCloseDisconnect = "Disconnected by client".equals(returnReason);
+
+                    if (windowCloseDisconnect) {
+                        // Disconnessione VOLONTARIA (chiusura finestra). Chiedi nome per riconnettere.
+                        System.out.println(getCurrentTimestamp() + " - Initializing: NetworkService exists but disconnected (Window Close). Resetting state for reconnection.");
+                        networkServiceInstance.cleanupExecutor(); // Pulisci vecchio executor
+                        networkServiceInstance.setServerListener(this); // Reimposta listener
+                        labelStatus.setText("Disconnected. Enter name to reconnect.");
+                        buttonCreaPartita.setDisable(true);
+                        if (flowPanePartite != null) flowPanePartite.getChildren().clear();
+                        // Chiedi nome per triggerare riconnessione
+                        askForNameAndConnect();
+
+                    } else {
+                        // Disconnessione INATTESA (Errore server, rete, etc.). Reset completo.
+                        System.err.println(getCurrentTimestamp() + " - Initializing: NetworkService exists but is NOT connected (Unexpected). Resetting...");
+                        if(networkServiceInstance != null) networkServiceInstance.cleanupExecutor();
+                        networkServiceInstance = null; // Resetta completamente l'istanza
+                        staticPlayerName = null; // Perde il nome
+                        labelStatus.setText("Connection lost. Please restart or enter name.");
+                        buttonCreaPartita.setDisable(true);
+                        if (flowPanePartite != null) flowPanePartite.getChildren().clear();
+                        // Avvia recupero chiedendo nome (creerà nuova istanza service)
+                        askForNameAndConnect();
+                    }
                 }
             }
             System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): initialize (runLater) END");
         });
     }
 
+    // --- Resto del file HomePageController.java (INVARIATO dalla versione precedente) ---
+    // ... (assicurati che tutti gli altri metodi siano presenti) ...
+
     // Prepara la UI quando si torna alla lobby (o dopo connessione iniziale)
     private void prepareForReturn(String statusMessage) {
-        System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): prepareForReturn CALLED");
+        System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): prepareForReturn CALLED with status: " + statusMessage);
         if (networkServiceInstance == null) {
-            System.err.println(getCurrentTimestamp()+" - ERROR in prepareForReturn: networkServiceInstance is NULL!");
-            Platform.runLater(() -> {
-                labelStatus.setText("Error: Connection lost.");
-                buttonCreaPartita.setDisable(true);
-                if (flowPanePartite != null) flowPanePartite.getChildren().clear();
-            });
+            System.err.println(getCurrentTimestamp()+" - WARNING in prepareForReturn: networkServiceInstance is NULL! Initialize should handle.");
             return;
         }
-        // Resetta flag navigazione e cache quando torniamo alla home
+
         isNavigatingToGame.set(false);
         cachedBoardDuringNavigation = null;
         cachedTurnDuringNavigation.set(false);
@@ -118,7 +145,18 @@ public class HomePageController implements Initializable, NetworkService.ServerL
         networkServiceInstance.setServerListener(this);
 
         Platform.runLater(() -> {
-            labelStatus.setText(statusMessage + (staticPlayerName != null ? " Welcome back, " + staticPlayerName + "!" : ""));
+            String welcomeMsg = "";
+            if (statusMessage != null && statusMessage.startsWith("Opponent left")) {
+                welcomeMsg = "You won the last game!";
+            } else if (statusMessage != null && statusMessage.startsWith("Game Over:")) {
+                welcomeMsg = "Last game finished.";
+            } else if (statusMessage != null && !"VOLUNTARY_LEAVE".equals(statusMessage) && !"Disconnected by client".equals(statusMessage)) {
+                welcomeMsg = statusMessage;
+            } else {
+                welcomeMsg = "Returned to Lobby."; // Default per VOLUNTARY_LEAVE o null
+            }
+
+            labelStatus.setText(welcomeMsg + (staticPlayerName != null ? " Welcome back, " + staticPlayerName + "!" : ""));
             buttonCreaPartita.setDisable(false);
             if (flowPanePartite != null) flowPanePartite.getChildren().clear();
         });
@@ -127,30 +165,31 @@ public class HomePageController implements Initializable, NetworkService.ServerL
             System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): prepareForReturn: Requesting game list.");
             networkServiceInstance.sendListRequest();
         } else {
-            System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): prepareForReturn: Cannot request list, not connected.");
-            Platform.runLater(() -> {
-                labelStatus.setText("Error: Not connected.");
-                buttonCreaPartita.setDisable(true);
-            });
+            // Se arriviamo qui non connessi, c'è un problema logico altrove
+            System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): prepareForReturn: UNEXPECTEDLY not connected. Initialize should have handled.");
+            labelStatus.setText("Error: Not connected.");
+            buttonCreaPartita.setDisable(true);
         }
     }
 
 
+    // Chiede nome e tenta connessione/riconnessione
     private void askForNameAndConnect() {
         System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): askForNameAndConnect CALLED");
-        if (networkServiceInstance == null) {
-            System.err.println(getCurrentTimestamp()+" - Cannot ask for name: networkServiceInstance is null!");
-            Platform.runLater(()-> labelStatus.setText("Internal Error. Restart needed."));
-            return;
-        }
 
         Platform.runLater(() -> {
-            TextInputDialog dialog = new TextInputDialog("Giocatore");
+            if (networkServiceInstance == null || !networkServiceInstance.canAttemptConnect()) {
+                System.out.println(getCurrentTimestamp()+" - Creating/Re-creating NetworkService in askForNameAndConnect");
+                if(networkServiceInstance != null) networkServiceInstance.cleanupExecutor();
+                networkServiceInstance = new NetworkService();
+            }
+
+            TextInputDialog dialog = new TextInputDialog(staticPlayerName != null ? staticPlayerName : "Giocatore");
             dialog.setTitle("Nome Giocatore");
-            dialog.setHeaderText("Inserisci il tuo nome:");
+            dialog.setHeaderText("Inserisci il tuo nome per connetterti:");
             dialog.setContentText("Nome:");
 
-            Stage owner = getCurrentStage(); // Usa helper
+            Stage owner = getCurrentStage();
             if(owner != null) dialog.initOwner(owner);
 
             Optional<String> result = dialog.showAndWait();
@@ -162,7 +201,15 @@ public class HomePageController implements Initializable, NetworkService.ServerL
                     staticPlayerName = name.trim();
                     labelStatus.setText("Connecting as " + staticPlayerName + "...");
                     System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): Connecting with initial listener THIS instance.");
+
+                    if (!networkServiceInstance.canAttemptConnect()) {
+                        System.out.println(getCurrentTimestamp()+" - Re-creating NetworkService before connect (second check)");
+                        networkServiceInstance.cleanupExecutor();
+                        networkServiceInstance = new NetworkService();
+                    }
+
                     networkServiceInstance.connect("127.0.0.1", 12345, this);
+                    buttonCreaPartita.setDisable(true);
                 }
             }, () -> {
                 Platform.runLater(() -> {
@@ -177,17 +224,19 @@ public class HomePageController implements Initializable, NetworkService.ServerL
     private void handleCreaPartita() {
         System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): handleCreaPartita CALLED");
         if (networkServiceInstance == null || !networkServiceInstance.isConnected()) {
-            System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): Cannot create game, not connected.");
-            showError("Errore", "Non connesso al server.");
+            System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): Not connected. Triggering connection process...");
+            buttonCreaPartita.setDisable(true);
+            labelStatus.setText("Connecting...");
+            if(flowPanePartite != null) flowPanePartite.getChildren().clear();
+            askForNameAndConnect();
             return;
         }
+
         buttonCreaPartita.setDisable(true);
         labelStatus.setText("Creating game...");
         disableJoinButtons();
         networkServiceInstance.sendCreateGame();
     }
-
-    // --- Implementazione ServerListener ---
 
     @Override
     public void onConnected() {
@@ -199,9 +248,8 @@ public class HomePageController implements Initializable, NetworkService.ServerL
     public void onNameRequested() {
         System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onNameRequested");
         if (staticPlayerName == null || staticPlayerName.trim().isEmpty()) {
-            System.err.println(getCurrentTimestamp() + " - GUI: Server requested name, but staticPlayerName is invalid! Disconnecting.");
-            showError("Errore Interno", "Nome giocatore non disponibile per l'invio. Disconnessione.");
-            if(networkServiceInstance != null) networkServiceInstance.disconnect();
+            System.err.println(getCurrentTimestamp() + " - GUI: Server requested name, but staticPlayerName is invalid! Re-asking.");
+            askForNameAndConnect();
             return;
         }
         Platform.runLater(() -> labelStatus.setText("Server requested name. Sending '" + staticPlayerName + "'..."));
@@ -221,35 +269,24 @@ public class HomePageController implements Initializable, NetworkService.ServerL
     @Override
     public void onDisconnected(String reason) {
         System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onDisconnected. Reason: " + reason);
-
-        boolean wasConnected = (networkServiceInstance != null && networkServiceInstance.isConnected());
-        // Non impostare a null, ma gestisci lo stato
-        // if (networkServiceInstance != null) { // Non chiamare disconnect qui }
-        staticPlayerName = null;
-        isNavigatingToGame.set(false); // Resetta flag navigazione
+        lastReturnReason = reason;
 
         Platform.runLater(() -> {
-            // Mostra errore solo se la disconnessione non era attesa (non "Disconnected by client")
-            // e se eravamo effettivamente connessi.
-            if (wasConnected && !"Disconnected by client".equals(reason)) {
-                showError("Disconnesso", "Connessione persa: " + reason + "\nPotrebbe essere necessario riavviare il client.");
-            } else if (!wasConnected) {
-                System.out.println(getCurrentTimestamp() + " - GUI: onDisconnected event, but service was already null or not connected.");
-            }
-
-            labelStatus.setText("Disconnected: " + reason + ". Restart to connect.");
+            labelStatus.setText("Disconnected: " + reason);
             buttonCreaPartita.setDisable(true);
             if (flowPanePartite != null) flowPanePartite.getChildren().clear();
+            System.out.println(getCurrentTimestamp() + " - GUI: Disconnected state updated immediately.");
 
-            System.out.println(getCurrentTimestamp() + " - GUI: State reset due to disconnection. Restart client to reconnect.");
+            boolean voluntaryDisconnect = "VOLUNTARY_LEAVE".equals(reason) || "Disconnected by client".equals(reason);
+            if (!voluntaryDisconnect) {
+                showError("Disconnesso", "Connessione persa inaspettatamente: " + reason);
+            }
         });
     }
-
 
     @Override
     public void onMessageReceived(String rawMessage) {
         System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: Unhandled message: " + rawMessage);
-        // Platform.runLater(() -> { labelStatus.setText("Received unknown message from server."); });
     }
 
     @Override
@@ -262,10 +299,8 @@ public class HomePageController implements Initializable, NetworkService.ServerL
             }
             if (staticPlayerName != null && networkServiceInstance != null && networkServiceInstance.isConnected()) {
                 labelStatus.setText("Logged in as " + staticPlayerName + ". Games available: " + games.size());
-            } else if (networkServiceInstance != null && networkServiceInstance.isConnected()) {
-                labelStatus.setText("Connected. Games available: " + games.size());
-            } else {
-                labelStatus.setText("Disconnected.");
+            } else if (networkServiceInstance != null && networkServiceInstance.isConnected()){
+                labelStatus.setText("Connected (pending name?). Games available: " + games.size());
             }
 
             flowPanePartite.getChildren().clear();
@@ -280,13 +315,10 @@ public class HomePageController implements Initializable, NetworkService.ServerL
                         PartitaItemController controller = loader.getController();
                         controller.setData(gameInfo.id, gameInfo.creatorName);
                         flowPanePartite.getChildren().add(gameItemNode);
-                    } catch (IOException e) {
-                        System.err.println(getCurrentTimestamp() + " - Error loading PartitaItem.fxml: "+e.getMessage());
-                        e.printStackTrace();
-                        flowPanePartite.getChildren().add(new Label("Errore caricamento item partita"));
                     } catch (Exception e) {
-                        System.err.println(getCurrentTimestamp() + " - Generic error processing game item: "+e.getMessage());
+                        System.err.println(getCurrentTimestamp() + " - Error loading/setting PartitaItem: "+e.getMessage());
                         e.printStackTrace();
+                        flowPanePartite.getChildren().add(new Label("Errore item partita"));
                     }
                 }
             }
@@ -301,6 +333,7 @@ public class HomePageController implements Initializable, NetworkService.ServerL
         Platform.runLater(() -> {
             labelStatus.setText("Game " + gameId + " created. Waiting for opponent...");
             disableJoinButtons();
+            buttonCreaPartita.setDisable(true);
         });
     }
 
@@ -315,25 +348,22 @@ public class HomePageController implements Initializable, NetworkService.ServerL
     @Override
     public void onGameStart(int gameId, char symbol, String opponentName) {
         System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onGameStart received for game " + gameId + ", Symbol: " + symbol + ", Opponent: " + opponentName);
+        lastReturnReason = null;
         Platform.runLater(() -> labelStatus.setText("Game " + gameId + " started! Loading game screen..."));
-
-        // --- CORREZIONE: Imposta il flag QUI, prima di chiamare navigate ---
         isNavigatingToGame.set(true);
-        // --- Resetta cache LOCALE prima della navigazione, la lettura avverrà DOPO ---
         cachedBoardDuringNavigation = null;
         cachedTurnDuringNavigation.set(false);
-
         navigateToGameScreen(gameId, symbol, opponentName);
     }
 
-    // Metodo per tornare alla Home Page (es. da GameController)
     public void returnToHomePage(String statusMessage) {
         System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): returnToHomePage CALLED with message: " + statusMessage);
+        lastReturnReason = statusMessage;
+
         Platform.runLater(() -> {
             try {
                 System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): returnToHomePage (runLater) START");
-                Stage stageToUse = getCurrentStage(); // Usa helper
-
+                Stage stageToUse = getCurrentStage();
                 if (stageToUse == null) {
                     System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): Stage is still NULL in returnToHomePage! Cannot return.");
                     showError("Errore UI Critico", "Impossibile tornare alla Home Page (Stage non trovato).");
@@ -344,7 +374,6 @@ public class HomePageController implements Initializable, NetworkService.ServerL
 
                 FXMLLoader loader = new FXMLLoader(getClass().getResource("/org/trisclient/trisclient/home-page-view.fxml"));
                 Parent homeRoot = loader.load();
-                // HomePageController newHomeController = loader.getController(); // Non serve recuperare il nuovo controller qui
                 System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): Loaded new home-page-view.fxml. New controller hash: "+loader.getController().hashCode());
 
                 Scene scene = stageToUse.getScene();
@@ -361,41 +390,32 @@ public class HomePageController implements Initializable, NetworkService.ServerL
                 stageToUse.show();
                 System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): returnToHomePage (runLater) END. Stage is showing.");
 
-            } catch (IOException e) {
-                System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): !!! IOException during returnToHomePage !!!");
-                e.printStackTrace();
-                showError("Errore UI", "Impossibile caricare la Home Page.\n" + e.getMessage());
             } catch (Exception e) {
-                System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): !!! Generic EXCEPTION during returnToHomePage !!!");
+                System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): !!! EXCEPTION during returnToHomePage !!!");
                 e.printStackTrace();
-                showError("Errore UI Critico", "Errore imprevisto tornando alla Home Page.\n" + e.getMessage());
+                showError("Errore UI Critico", "Errore tornando alla Home Page.\n" + e.getMessage());
             }
         });
     }
 
-    // --- Metodi Listener che potrebbero arrivare durante la navigazione ---
-
     @Override public void onBoardUpdate(String[] board) {
         if (isNavigatingToGame.get()) {
             System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): CACHING onBoardUpdate during navigation: " + Arrays.toString(board));
-            cachedBoardDuringNavigation = board; // Sovrascrive eventuale cache precedente
+            cachedBoardDuringNavigation = board;
         } else {
             System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): !!! Received onBoardUpdate UNEXPECTEDLY (not navigating) !!! Board: "+Arrays.toString(board));
         }
     }
-
     @Override public void onYourTurn() {
         if (isNavigatingToGame.get()) {
             System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): CACHING onYourTurn during navigation.");
-            cachedTurnDuringNavigation.set(true); // Imposta a true
+            cachedTurnDuringNavigation.set(true);
         } else {
             System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): !!! Received onYourTurn UNEXPECTEDLY (not navigating) !!!");
         }
     }
-
     @Override public void onGameOver(String result) { System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): !!! Received onGameOver UNEXPECTEDLY !!! Result: "+result + " | isNavigating="+isNavigatingToGame.get()); }
     @Override public void onOpponentLeft() { System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): !!! Received onOpponentLeft UNEXPECTEDLY !!!" + " | isNavigating="+isNavigatingToGame.get()); }
-
     @Override
     public void onError(String message) {
         System.err.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onError: " + message + " | isNavigating="+isNavigatingToGame.get());
@@ -403,20 +423,18 @@ public class HomePageController implements Initializable, NetworkService.ServerL
             showError("Errore dal Server", message);
             if (labelStatus != null) labelStatus.setText("Error: " + message);
 
-            // Se l'errore arriva durante la navigazione, annullala
             if (isNavigatingToGame.compareAndSet(true, false)) {
-                System.err.println(getCurrentTimestamp() + " - HomePageController: Error received during game navigation. Aborting navigation attempt.");
-                buttonCreaPartita.setDisable(false);
+                System.err.println(getCurrentTimestamp() + " - HomePageController: Error received during game navigation. Aborting.");
+                if(buttonCreaPartita != null) buttonCreaPartita.setDisable(false);
                 if (networkServiceInstance != null && networkServiceInstance.isConnected()) {
                     networkServiceInstance.sendListRequest();
                 }
-                labelStatus.setText("Error starting game: " + message);
+                if(labelStatus != null) labelStatus.setText("Error starting game: " + message);
                 return;
             }
 
             boolean stillConnected = (networkServiceInstance != null && networkServiceInstance.isConnected());
             if(stillConnected){
-                // Riabilita Crea e richiede lista se l'errore suggerisce un fallimento di join/create
                 if (buttonCreaPartita != null && (message.contains("full") || message.contains("not found") || message.contains("Invalid") || message.contains("Cannot join") || message.contains("not waiting"))) {
                     buttonCreaPartita.setDisable(false);
                     networkServiceInstance.sendListRequest();
@@ -427,35 +445,25 @@ public class HomePageController implements Initializable, NetworkService.ServerL
         });
     }
 
-    // --- Metodi Ausiliari ---
-
-    // --- MODIFICATO ---
     private void navigateToGameScreen(int gameId, char symbol, String opponentName) {
         System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): navigateToGameScreen CALLED for game " + gameId);
-        // isNavigatingToGame è già true
 
-        // Esegui tutto nel Platform.runLater per garantire coerenza UI e lettura cache
         Platform.runLater(() -> {
-            // --- NUOVO: Leggi i valori cachati QUI, DENTRO runLater ---
             final String[] boardToPass = cachedBoardDuringNavigation;
-            final boolean turnToPass = cachedTurnDuringNavigation.getAndSet(false); // Leggi e resetta atomicamente
-            // --- Pulisci cache locale ORA ---
+            final boolean turnToPass = cachedTurnDuringNavigation.getAndSet(false);
             cachedBoardDuringNavigation = null;
-            // -------------------------------------------------------------
 
-            // Log dei valori che verranno passati
             if(boardToPass != null) System.out.println(getCurrentTimestamp()+" - HomePageController (in runLater): Preparing to pass cached board: " + Arrays.toString(boardToPass));
             if(turnToPass) System.out.println(getCurrentTimestamp()+" - HomePageController (in runLater): Preparing to pass cached turn=true.");
 
             try {
                 System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): navigateToGameScreen (runLater) START");
-                Stage stageToUse = getCurrentStage(); // Usa helper
+                Stage stageToUse = getCurrentStage();
 
                 if (stageToUse == null) {
                     System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): Stage is NULL in navigateToGameScreen! Cannot navigate.");
                     showError("Errore UI Critico", "Impossibile caricare la schermata di gioco (Stage non trovato).");
-                    isNavigatingToGame.set(false); // Resetta flag
-                    // Ripristina lobby
+                    isNavigatingToGame.set(false);
                     if(networkServiceInstance!=null && networkServiceInstance.isConnected()) {
                         networkServiceInstance.sendListRequest();
                         if(buttonCreaPartita!=null) buttonCreaPartita.setDisable(false);
@@ -476,17 +484,15 @@ public class HomePageController implements Initializable, NetworkService.ServerL
 
 
                 System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): Calling gameController.setupGame()...");
-                // --- Passa i valori letti DENTRO runLater ---
                 gameController.setupGame(
                         networkServiceInstance,
                         gameId,
                         symbol,
                         opponentName,
-                        this::returnToHomePage, // Callback per tornare
-                        boardToPass,            // Usa variabile letta qui
-                        turnToPass              // Usa variabile letta qui
+                        this::returnToHomePage,
+                        boardToPass,
+                        turnToPass
                 );
-                // --------------------------------------------------
                 System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): gameController.setupGame() RETURNED.");
 
                 Scene scene = stageToUse.getScene();
@@ -500,22 +506,20 @@ public class HomePageController implements Initializable, NetworkService.ServerL
                 stageToUse.show();
                 System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): navigateToGameScreen (runLater) END. Stage is showing Game View.");
 
-                // La navigazione è completa, resetta il flag
                 isNavigatingToGame.set(false);
 
             } catch (Exception e) {
                 System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): !!! EXCEPTION during navigation to game screen !!!");
                 e.printStackTrace();
                 showError("Errore UI Critico", "Impossibile caricare la schermata di gioco.\n" + e.getMessage());
-                isNavigatingToGame.set(false); // Resetta flag anche in caso di errore
-                // Ripristina lobby
+                isNavigatingToGame.set(false);
                 if(networkServiceInstance!=null && networkServiceInstance.isConnected()){
                     networkServiceInstance.sendListRequest();
                     if(buttonCreaPartita != null) buttonCreaPartita.setDisable(false);
                     if(labelStatus != null) labelStatus.setText("Error loading game.");
                 }
             }
-        }); // Fine Platform.runLater
+        });
     }
 
 
@@ -528,7 +532,7 @@ public class HomePageController implements Initializable, NetworkService.ServerL
         alert.setTitle(title);
         alert.setHeaderText(null);
         alert.setContentText(content);
-        Stage owner = getCurrentStage(); // Usa helper
+        Stage owner = getCurrentStage();
         if(owner != null) {
             alert.initOwner(owner);
         } else {
@@ -553,24 +557,19 @@ public class HomePageController implements Initializable, NetworkService.ServerL
         });
     }
 
-    // Helper per ottenere lo stage corrente in modo più sicuro
     private Stage getCurrentStage() {
         try {
-            // Prova dallo stage memorizzato
             if (currentStage != null && currentStage.isShowing()) {
                 return currentStage;
             }
-            // Prova dal labelStatus
             if (labelStatus != null && labelStatus.getScene() != null && labelStatus.getScene().getWindow() instanceof Stage) {
                 currentStage = (Stage) labelStatus.getScene().getWindow();
                 return currentStage;
             }
-            // Prova dal flowPanePartite
             if (flowPanePartite != null && flowPanePartite.getScene() != null && flowPanePartite.getScene().getWindow() instanceof Stage) {
                 currentStage = (Stage) flowPanePartite.getScene().getWindow();
                 return currentStage;
             }
-            // Fallback: cerca la prima finestra visibile
             return getCurrentStageFallback();
         } catch (Exception e) {
             System.err.println("Exception trying to get current stage: " + e.getMessage());
@@ -578,7 +577,6 @@ public class HomePageController implements Initializable, NetworkService.ServerL
         }
     }
 
-    // Fallback separato per chiarezza
     private Stage getCurrentStageFallback() {
         return Stage.getWindows().stream()
                 .filter(Window::isShowing)
