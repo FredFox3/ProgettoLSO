@@ -369,12 +369,6 @@ public class HomePageController implements Initializable, NetworkService.ServerL
         });
     }
 
-    // Metodi non usati direttamente in HomePage ma necessari per l'interfaccia
-    @Override public void onBoardUpdate(String[] board) { System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): !!! Received onBoardUpdate UNEXPECTEDLY !!!"); }
-    @Override public void onYourTurn() { System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): !!! Received onYourTurn UNEXPECTEDLY !!!"); }
-    @Override public void onGameOver(String result) { System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): !!! Received onGameOver UNEXPECTEDLY !!! Result: "+result); }
-    @Override public void onOpponentLeft() { System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): !!! Received onOpponentLeft UNEXPECTEDLY !!!"); }
-
     @Override
     public void onError(String message) {
         System.err.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onError: " + message);
@@ -501,6 +495,41 @@ public class HomePageController implements Initializable, NetworkService.ServerL
                 if (joinButton != null) {
                     joinButton.setDisable(true);
                 }
+            }
+        });
+    }
+
+    @Override
+    public void onBoardUpdate(String[] board) {
+        System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): !!! Received onBoardUpdate UNEXPECTEDLY !!!");
+        // Logga l'errore, non dovrebbe succedere nella lobby
+    }
+
+    @Override
+    public void onYourTurn() {
+        System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): !!! Received onYourTurn UNEXPECTEDLY !!!");
+        // Logga l'errore
+    }
+
+    // --- NUOVO METODO IMPLEMENTATO (VUOTO) ---
+    @Override
+    public void onGameOver(String result) {
+        System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): !!! Received onGameOver UNEXPECTEDLY !!! Result: "+result);
+        // Logga l'errore, questo messaggio è per GameController
+    }
+    // --- FINE NUOVO METODO ---
+
+    @Override
+    public void onOpponentLeft() {
+        System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): !!! Received onOpponentLeft UNEXPECTEDLY !!!");
+        // Logga l'errore, anche questo è per GameController
+        // Potrebbe succedere se un messaggio arriva durante la transizione di schermata?
+        // In quel caso, assicurati che lo stato sia coerente (es. richiedi lista partite)
+        Platform.runLater(()-> {
+            if (networkServiceInstance != null && networkServiceInstance.isConnected()) {
+                labelStatus.setText("Info partita precedente ricevuta. Aggiorno lista...");
+                networkServiceInstance.sendListRequest();
+                buttonCreaPartita.setDisable(false); // Riabilita se loggato
             }
         });
     }
