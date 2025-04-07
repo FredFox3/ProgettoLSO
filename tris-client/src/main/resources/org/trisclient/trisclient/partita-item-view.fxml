@@ -16,6 +16,11 @@
                   <Font size="15.0" />
                </font>
             </Label>
+            <Label fx:id="labelStatoPartita" text="Stato" style="-fx-font-style: italic;">
+               <font>
+                  <Font size="15.0" />
+               </font>
+            </Label>
             <Button fx:id="buttonUniscitiPartita" mnemonicParsing="false" text="Unisciti" onAction="#handleUniscitiPartita">
                <font>
                   <Font size="15.0" />

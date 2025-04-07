@@ -35,6 +35,7 @@ public class NetworkService {
         return LocalDateTime.now().format(TIMESTAMP_FORMATTER);
     }
 
+    // Interfaccia ServerListener (invariata dall'ultimo codice)
     public interface ServerListener {
         void onConnected();
         void onDisconnected(String reason);
@@ -56,13 +57,23 @@ public class NetworkService {
         void onActionConfirmed(String message);
     }
 
+    // GameInfo con stato aggiunto
     public static class GameInfo {
         public final int id;
         public final String creatorName;
-        public GameInfo(int id, String creatorName) { this.id = id; this.creatorName = creatorName; }
-        @Override public String toString() { return "Partita " + id + " (creata da " + creatorName + ")"; }
+        public final String state; // Stato aggiunto
+
+        public GameInfo(int id, String creatorName, String state) { // Costruttore aggiornato
+            this.id = id;
+            this.creatorName = creatorName;
+            this.state = state;
+        }
+        @Override public String toString() { // toString aggiornato (opzionale)
+            return "Partita " + id + " (da " + creatorName + ") - " + state;
+        }
     }
 
+    // Metodi setServerListener, connect, handleDisconnection (invariati)
     public void setServerListener(ServerListener newListener) {
         String oldListenerName = this.currentListenerName;
         String newListenerName = (newListener != null) ? newListener.getClass().getSimpleName() + " ("+newListener.hashCode()+")" : "null";
@@ -171,6 +182,7 @@ public class NetworkService {
         });
     }
 
+    // parseServerMessage con modifica per GAMES_LIST
     private void parseServerMessage(String message, ServerListener currentListener) {
         if (message == null || message.trim().isEmpty()) return;
         if(currentListener == null){
@@ -183,28 +195,33 @@ public class NetworkService {
                 currentListener.onNameRequested();
             } else if (message.startsWith("RESP:NAME_OK")) {
                 currentListener.onNameAccepted();
-            } else if (message.startsWith("RESP:GAMES_LIST;")) {
+            } else if (message.startsWith("RESP:GAMES_LIST;")) { // Modifica qui
                 List<GameInfo> games = new ArrayList<>();
                 String content = message.substring("RESP:GAMES_LIST;".length());
                 if (!content.isEmpty()) {
                     String[] gameEntries = content.split("\\|");
                     for (String entry : gameEntries) {
-                        String[] parts = entry.split(",");
-                        if (parts.length >= 2) {
+                        String[] parts = entry.split(","); // Formato atteso: ID,NomeCreatore,Stato
+                        if (parts.length >= 3) { // Verifica che ci siano almeno 3 parti
                             try {
                                 int id = Integer.parseInt(parts[0]);
-                                String name = String.join(",", Arrays.copyOfRange(parts, 1, parts.length)); // Join remaining parts for names with commas
-                                games.add(new GameInfo(id, name));
+                                String name = parts[1]; // Nome
+                                String state = parts[2]; // Stato
+                                games.add(new GameInfo(id, name, state)); // Usa il nuovo costruttore
                             } catch (NumberFormatException e) {
                                 System.err.println(getCurrentTimestamp() + " - Error parsing game ID in list: " + entry);
+                            } catch (IndexOutOfBoundsException e) {
+                                System.err.println(getCurrentTimestamp() + " - Error parsing game parts in list (Index): " + entry);
                             }
                         } else {
-                            System.err.println(getCurrentTimestamp() + " - Malformed game entry in list: " + entry);
+                            System.err.println(getCurrentTimestamp() + " - Malformed game entry in list (parts < 3): " + entry);
                         }
                     }
                 }
-                currentListener.onGamesList(games);
-            } else if (message.startsWith("RESP:CREATED ")) {
+                currentListener.onGamesList(games); // Invia la lista aggiornata
+            }
+            // ... resto di parseServerMessage (invariato dall'ultimo codice) ...
+            else if (message.startsWith("RESP:CREATED ")) {
                 try {
                     int gameId = Integer.parseInt(message.substring("RESP:CREATED ".length()).trim());
                     currentListener.onGameCreated(gameId);
@@ -319,6 +336,8 @@ public class NetworkService {
         }
     }
 
+
+    // Metodi sendMessage, sendX commands, disconnect, closeResources, shutdownExecutor, isConnected, getCurrentListener, canAttemptConnect, cleanupExecutor (invariati)
     public void sendMessage(String message) {
         final String msgToSend = message;
         PrintWriter currentOut = this.out;
@@ -330,7 +349,6 @@ public class NetworkService {
                 currentOut.println(msgToSend);
                 if (currentOut.checkError()) {
                     System.err.println(getCurrentTimestamp() + " - NetworkService (direct send): PrintWriter error detected AFTER sending. Likely disconnected.");
-                    // Attempt to handle disconnection here, as reading might block
                     if(running) {
                         handleDisconnection("Send failed (PrintWriter error)");
                     }
@@ -344,7 +362,6 @@ public class NetworkService {
         } else {
             System.err.println(getCurrentTimestamp() + " - Cannot send message, connection state invalid. Message: [" + msgToSend + "]");
             System.err.println(getCurrentTimestamp() + " - Send Check: running="+running+", socket="+(currentSocket != null)+", socket.isConnected="+(currentSocket != null ? currentSocket.isConnected():"N/A")+", socket.isClosed="+(currentSocket != null ? currentSocket.isClosed():"N/A")+", out="+(currentOut!=null)+", out.checkError="+(currentOut != null ? currentOut.checkError() : "N/A"));
-            // If we tried to send while not running/connected, maybe trigger disconnect callback if it wasn't already triggered
             if(!running){
                 Platform.runLater(() -> {
                     ServerListener l = listenerRef.get();
@@ -367,13 +384,13 @@ public class NetworkService {
         System.out.println(getCurrentTimestamp() + " - NetworkService: disconnect() CALLED (Window Close/App Exit).");
         if (!running) {
             System.out.println(getCurrentTimestamp() + " - NetworkService: disconnect() ignored, already not running.");
-            shutdownExecutor(); // Still ensure executor is cleaned up if called again
+            shutdownExecutor();
             return;
         }
 
-        handleDisconnection("Disconnected by client"); // Set running to false and notify listener
-        closeResources(); // Close IO streams and socket
-        shutdownExecutor(); // Shutdown the thread pool
+        handleDisconnection("Disconnected by client");
+        closeResources();
+        shutdownExecutor();
 
         System.out.println(getCurrentTimestamp() + " - NetworkService: disconnect() finished.");
     }
@@ -385,7 +402,6 @@ public class NetworkService {
             out.close();
             out = null;
         }
-        // Close socket before input stream to interrupt blocking read
         if (socket != null && !socket.isClosed()) {
             System.out.println(getCurrentTimestamp() + " - NetworkService: Closing Socket.");
             try {
@@ -400,14 +416,12 @@ public class NetworkService {
             try {
                 in.close();
             } catch (IOException e) {
-                // This might happen if socket was closed already, generally safe to ignore after socket close attempt
                 System.err.println(getCurrentTimestamp() + " - NetworkService: Error closing BufferedReader (may be expected after socket close): " + e.getMessage());
             }
             in = null;
         }
         System.out.println(getCurrentTimestamp() + " - NetworkService: Network resources closed.");
     }
-
 
     private void shutdownExecutor() {
         if (networkExecutor != null && !networkExecutor.isShutdown()) {
@@ -429,8 +443,6 @@ public class NetworkService {
     }
 
     public boolean isConnected() {
-        // Refined check: running must be true, socket must be non-null, connected, and not closed.
-        // Also check PrintWriter for critical errors (which usually indicate a closed stream).
         return running && socket != null && socket.isConnected() && !socket.isClosed() && out != null && !out.checkError() ;
     }
 
@@ -440,7 +452,6 @@ public class NetworkService {
     }
 
     public boolean canAttemptConnect() {
-        // Allow connection attempt if not currently running OR if the executor is shutdown/terminated.
         return !running || (networkExecutor == null || networkExecutor.isShutdown() || networkExecutor.isTerminated());
     }
 

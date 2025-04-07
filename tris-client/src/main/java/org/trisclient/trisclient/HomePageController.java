@@ -298,19 +298,26 @@ public class HomePageController implements Initializable, NetworkService.ServerL
             boolean loggedIn = (staticPlayerName != null && networkServiceInstance != null && networkServiceInstance.isConnected());
             if (loggedIn) {
                 labelStatus.setText("Logged in as " + staticPlayerName + ". Games available: " + games.size());
+            } else {
+                // Assicurati che anche quando non loggato, la lista venga pulita
+                labelStatus.setText("Not connected. Refresh unavailable."); // Messaggio se non loggato
             }
+
 
             flowPanePartite.getChildren().clear();
 
             if (games.isEmpty()) {
-                flowPanePartite.getChildren().add(new Label("Nessuna partita disponibile al momento."));
+                if(loggedIn) { // Mostra solo se l'utente è loggato e non ci sono partite
+                    flowPanePartite.getChildren().add(new Label("Nessuna partita disponibile al momento."));
+                }
             } else {
                 for (NetworkService.GameInfo gameInfo : games) {
                     try {
                         FXMLLoader loader = new FXMLLoader(getClass().getResource("/org/trisclient/trisclient/partita-item-view.fxml"));
                         Node gameItemNode = loader.load();
                         PartitaItemController controller = loader.getController();
-                        controller.setData(gameInfo.id, gameInfo.creatorName);
+                        // Passa anche lo stato al controller dell'item
+                        controller.setData(gameInfo.id, gameInfo.creatorName, gameInfo.state);
                         flowPanePartite.getChildren().add(gameItemNode);
                     } catch (Exception e) {
                         System.err.println(getCurrentTimestamp() + " - Error loading/setting PartitaItem: "+e.getMessage());
@@ -319,7 +326,11 @@ public class HomePageController implements Initializable, NetworkService.ServerL
                     }
                 }
             }
-            setButtonsDisabled(!loggedIn);
+            // Lo stato dei bottoni dovrebbe essere gestito da altre parti
+            // (es. onNameAccepted li abilita, onDisconnected li disabilita)
+            // Qui aggiorniamo solo la lista
+            setButtonsDisabled(!loggedIn); // Mantiene logica di disabilitare se non connesso
+
         });
     }
 

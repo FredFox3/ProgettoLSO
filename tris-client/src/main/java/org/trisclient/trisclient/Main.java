@@ -28,7 +28,15 @@ public class Main extends Application {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/org/trisclient/trisclient/home-page-view.fxml"));
             Parent root = loader.load();
             primaryStage.setTitle("Tris Client");
-            primaryStage.setScene(new Scene(root));
+            Scene scene = new Scene(root);
+            String css = this.getClass().getResource("/org/trisclient/trisclient/style.css").toExternalForm();
+            if (css != null) {
+                scene.getStylesheets().add(css);
+                System.out.println(getCurrentTimestamp()+" - Main Application: Applied CSS.");
+            } else {
+                System.err.println(getCurrentTimestamp()+" - Main Application: CSS file not found!");
+            }
+            primaryStage.setScene(scene);
 
             primaryStage.setOnCloseRequest(event -> {
                 System.out.println(getCurrentTimestamp()+" - Main Application: Window close requested.");

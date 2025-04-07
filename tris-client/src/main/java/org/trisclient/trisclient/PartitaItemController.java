@@ -14,6 +14,7 @@ import java.time.format.DateTimeFormatter;
 public class PartitaItemController {
 
     @FXML private Label labelNumeroPartita;
+    @FXML private Label labelStatoPartita; // NUOVA LABEL
     @FXML private Button buttonUniscitiPartita;
 
     private int gameId;
@@ -25,12 +26,41 @@ public class PartitaItemController {
         return LocalDateTime.now().format(TIMESTAMP_FORMATTER);
     }
 
-    public void setData(int gameId, String creatorName) {
+    // Metodo setData aggiornato per accettare e visualizzare lo stato
+    public void setData(int gameId, String creatorName, String state) {
         this.gameId = gameId;
         Platform.runLater(() -> {
             labelNumeroPartita.setText("Partita " + gameId + "\n(da " + creatorName + ")");
+            labelStatoPartita.setText(state != null ? state : "N/A"); // Mostra lo stato
+
+            // Cambia stile in base allo stato (opzionale, ma utile)
+            updateStateStyle(state);
+
+            // Disabilita il join se la partita non è in attesa (se mai listassimo altri stati)
+            buttonUniscitiPartita.setDisable(!("Waiting".equalsIgnoreCase(state)));
+
         });
     }
+
+    // Metodo per cambiare stile (opzionale)
+    private void updateStateStyle(String state) {
+        if (labelStatoPartita == null) return;
+        // Rimuovi stili precedenti per evitare conflitti
+        labelStatoPartita.getStyleClass().removeAll("state-waiting", "state-inprogress", "state-unknown");
+
+        if ("Waiting".equalsIgnoreCase(state)) {
+            labelStatoPartita.getStyleClass().add("state-waiting");
+            // Puoi impostare il colore direttamente o usare classi CSS:
+            // labelStatoPartita.setStyle("-fx-text-fill: orange;");
+        } else if ("In Progress".equalsIgnoreCase(state)) {
+            labelStatoPartita.getStyleClass().add("state-inprogress");
+            // labelStatoPartita.setStyle("-fx-text-fill: green;");
+        } else {
+            labelStatoPartita.getStyleClass().add("state-unknown");
+            // labelStatoPartita.setStyle("-fx-text-fill: grey;");
+        }
+    }
+
 
     @FXML
     private void handleUniscitiPartita() {
@@ -39,15 +69,14 @@ public class PartitaItemController {
         NetworkService service = HomePageController.networkServiceInstance;
 
         if (service != null && service.isConnected()) {
-            buttonUniscitiPartita.setDisable(true); // Disable immediately
+            buttonUniscitiPartita.setDisable(true);
             System.out.println(getCurrentTimestamp() + " - PartitaItemController: Sending JOIN_REQUEST " + gameId);
             service.sendJoinRequest(gameId);
-            // User now waits for HomePageController to handle the response (accepted/rejected)
-            // Consider adding feedback like updating a status label in HomePageController
         } else {
             System.err.println(getCurrentTimestamp() + " - PartitaItemController: Cannot join, NetworkService not available or not connected.");
             showError("Errore di Connessione", "Impossibile unirsi alla partita. Controlla la connessione al server.");
-            buttonUniscitiPartita.setDisable(false); // Re-enable if connection failed
+            // Riabilita se fallisce subito
+            // buttonUniscitiPartita.setDisable(false); // Considera se riabilitare qui o attendere onError
         }
     }
 
