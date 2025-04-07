@@ -378,23 +378,19 @@ public class GameController implements NetworkService.ServerListener {
 
             String alertTitle = "Partita Abbandonata";
             String alertContent = "Hai abbandonato la partita (Hai perso).\nTorni alla lobby.";
-            String callbackMsg = "VOLUNTARY_LEAVE"; // Messaggio specifico per il ritorno volontario
+            String callbackMsg = "VOLUNTARY_LEAVE";
 
-            // Invia QUIT se connesso
             if (service != null && service.isConnected()) {
                 System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Sending QUIT to server.");
                 service.sendQuit();
             } else {
                 System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Not connected, cannot send QUIT.");
                 alertContent = "Hai abbandonato la partita (offline).\nTorni alla lobby.";
-                // callbackMsg rimane VOLUNTARY_LEAVE anche se offline, initialize gestirà lo stato
             }
 
-            // AZIONE IMMEDIATA
             System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Showing leave alert and scheduling return home immediately.");
-            showInfo(alertTitle, alertContent); // Mostra l'alert
+            showInfo(alertTitle, alertContent);
 
-            // Chiama il callback per tornare alla home
             if (returnToHomeCallback != null) {
                 final String finalCallbackMsg = callbackMsg;
                 Platform.runLater(() -> returnToHomeCallback.accept(finalCallbackMsg));
@@ -403,9 +399,7 @@ public class GameController implements NetworkService.ServerListener {
             }
 
         } else {
-            // Gioco già inattivo (secondo click?)
             System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Leave game clicked but game already inactive.");
-            // Non fare nulla per evitare doppie azioni
             if (returnToHomeCallback != null) {
                 System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Callback exists, return likely already triggered.");
             } else {
@@ -420,7 +414,6 @@ public class GameController implements NetworkService.ServerListener {
 
         boolean voluntaryLeave = "Disconnected by client".equals(reason);
 
-        // Gestisci solo le disconnessioni INATTESE mentre il gioco era ATTIVO
         if (gameActive.compareAndSet(true, false)) {
             System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Game deactivated due to UNEXPECTED Disconnection.");
             myTurn = false;
@@ -433,25 +426,22 @@ public class GameController implements NetworkService.ServerListener {
 
             if (returnToHomeCallback != null) {
                 System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Calling returnToHomeCallback for unexpected disconnect.");
-                final String finalCallbackMessage = "Disconnected: " + reason; // Usa il motivo reale
+                final String finalCallbackMessage = "Disconnected: " + reason;
                 Platform.runLater(() -> returnToHomeCallback.accept(finalCallbackMessage));
             } else {
                 System.err.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): returnToHomeCallback is null after unexpected disconnection!");
             }
 
-        } else { // Gioco GIÀ INATTIVO
+        } else {
             System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Disconnected received, but game already inactive. Reason: " + reason);
-            // Se è la conferma di disconnessione volontaria, ignora (gestito da handleLeaveGame)
             if (voluntaryLeave) {
                 System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Ignoring voluntary disconnect confirmation (handled by handleLeaveGame).");
             } else {
-                // Disconnessione inattesa con gioco già inattivo (es. dopo GameOver). Non fare nulla.
                 System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Unexpected disconnect received while game inactive. No action taken.");
             }
         }
     }
 
-    // --- Metodi Listener non previsti qui ---
     @Override public void onConnected() { System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received onConnected UNEXPECTEDLY !!!"); }
     @Override public void onNameRequested() { System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received NameRequested UNEXPECTEDLY !!!"); }
     @Override public void onNameAccepted() { System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received NameAccepted UNEXPECTEDLY !!!"); }
@@ -471,7 +461,6 @@ public class GameController implements NetworkService.ServerListener {
         System.err.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): *** onMessageReceived (Unhandled by NetworkService parser) on FX Thread *** Message: " + rawMessage);
     }
 
-    // --- Metodi Ausiliari ---
     private void showInfo(String title, String content) {
         if (!Platform.isFxApplicationThread()) {
             Platform.runLater(() -> showInfo(title, content));

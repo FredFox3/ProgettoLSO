@@ -9,65 +9,60 @@
 #include <stdbool.h>
 #include <time.h>
 #include <sys/time.h>
-#include <pthread.h> // Per i thread
+#include <pthread.h>
 
 #define PORT 12345
 #define BUFFER_SIZE 1024
-#define MAX_TOTAL_CLIENTS 10 // Max client connessi *contemporaneamente* al server
-#define MAX_GAMES 5         // Max partite *attive* contemporaneamente
+#define MAX_TOTAL_CLIENTS 10
+#define MAX_GAMES 5
 #define MAX_NAME_LEN 32
 
-// Stati del Client
 typedef enum {
-    CLIENT_STATE_CONNECTED, // Appena connesso, prima di mandare il nome
-    CLIENT_STATE_LOBBY,     // Connesso, ha mandato il nome, in attesa di comandi
-    CLIENT_STATE_WAITING,   // Ha creato una partita, aspetta un avversario
-    CLIENT_STATE_PLAYING    // Sta giocando una partita
+    CLIENT_STATE_CONNECTED,
+    CLIENT_STATE_LOBBY,
+    CLIENT_STATE_WAITING,
+    CLIENT_STATE_PLAYING
 } ClientState;
 
-// Stati della Partita
 typedef enum {
-    GAME_STATE_EMPTY,        // Slot non usato
-    GAME_STATE_WAITING,      // In attesa del secondo giocatore
-    GAME_STATE_IN_PROGRESS,  // Partita in corso
-    GAME_STATE_FINISHED      // Partita terminata (da implementare meglio stati specifici)
+    GAME_STATE_EMPTY,
+    GAME_STATE_WAITING,
+    GAME_STATE_IN_PROGRESS,
+    GAME_STATE_FINISHED
 } GameState;
 
-// Simboli Cella
 typedef enum { CELL_EMPTY, CELL_X, CELL_O } Cell;
 
-// Info Partita
 typedef struct {
     int id;
     GameState state;
     Cell board[3][3];
     int player1_fd;
     int player2_fd;
-    int current_turn_fd; // FD del giocatore di turno
+    int current_turn_fd;
     char player1_name[MAX_NAME_LEN];
     char player2_name[MAX_NAME_LEN];
 } GameInfo;
 
-// Info Client
 typedef struct {
     int fd;
     ClientState state;
     char name[MAX_NAME_LEN];
-    int game_id; // ID della partita a cui partecipa (0 se nessuna)
-    bool active; // Flag per indicare se lo slot client è in uso
+    int game_id;
+    bool active;
 } ClientInfo;
 
-// --- Variabili Globali ---
+
 GameInfo games[MAX_GAMES];
 ClientInfo clients[MAX_TOTAL_CLIENTS];
 int server_fd = -1;
 volatile sig_atomic_t keep_running = 1;
-int next_game_id = 1; // Contatore per ID univoci partite
+int next_game_id = 1;
 
 pthread_mutex_t client_list_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t game_list_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-// --- Funzioni Utilità Log ---
+
 void get_timestamp(char *buffer, size_t len) {
     struct timeval tv;
     struct tm tm_info;
@@ -94,7 +89,7 @@ void get_timestamp(char *buffer, size_t len) {
     perror(msg); \
 } while(0)
 
-// --- Funzioni di Gestione Partita ---
+
 void init_board(Cell board[3][3]) {
     memset(board, CELL_EMPTY, sizeof(Cell) * 3 * 3);
 }
@@ -141,8 +136,6 @@ bool board_full(Cell board[3][3]) {
 
 bool send_to_client(int client_fd, const char* message) {
     if (client_fd < 0) return false;
-    // Evita log eccessivi per messaggi di conferma opzionali
-    // LOG("DEBUG: Sending to fd %d: [%s]\n", client_fd, message);
     ssize_t bytes_sent = send(client_fd, message, strlen(message), MSG_NOSIGNAL);
     if (bytes_sent <= 0) {
         if (bytes_sent == 0 || errno == EPIPE || errno == ECONNRESET) {
@@ -175,7 +168,6 @@ int find_game_index(int game_id) {
 }
 
 
-// --- Logica di Gestione Client (Eseguita in un Thread Separato) ---
 void *handle_client(void *arg) {
     int client_index = *((int*)arg);
     free(arg);
@@ -211,9 +203,8 @@ void *handle_client(void *arg) {
         LOG("Received from fd %d (index %d, name '%s', state %d): [%s]\n",
             client_fd, client_index, clients[client_index].name, clients[client_index].state, buffer);
 
-        // --- Parsing del Comando ---
 
-        // Comando: NAME <nome>
+
         if (strncmp(buffer, "NAME ", 5) == 0 && clients[client_index].state == CLIENT_STATE_CONNECTED) {
             pthread_mutex_lock(&client_list_mutex);
             strncpy(clients[client_index].name, buffer + 5, MAX_NAME_LEN - 1);
@@ -223,7 +214,6 @@ void *handle_client(void *arg) {
              send_to_client(client_fd, "RESP:NAME_OK\n");
             pthread_mutex_unlock(&client_list_mutex);
         }
-        // Comando: LIST
         else if (strcmp(buffer, "LIST") == 0 && clients[client_index].state == CLIENT_STATE_LOBBY) {
             response[0] = '\0';
             strcat(response, "RESP:GAMES_LIST;");
@@ -244,7 +234,6 @@ void *handle_client(void *arg) {
             strcat(response, "\n");
             if (!send_to_client(client_fd, response)) client_connected = false;
         }
-        // Comando: CREATE
         else if (strcmp(buffer, "CREATE") == 0 && clients[client_index].state == CLIENT_STATE_LOBBY) {
             int game_idx = -1;
             pthread_mutex_lock(&game_list_mutex);
@@ -279,7 +268,6 @@ void *handle_client(void *arg) {
             pthread_mutex_unlock(&game_list_mutex);
             if (!send_to_client(client_fd, response)) client_connected = false;
         }
-        // Comando: JOIN <id>
         else if (strncmp(buffer, "JOIN ", 5) == 0 && clients[client_index].state == CLIENT_STATE_LOBBY) {
             int game_id_to_join = atoi(buffer + 5);
             int game_idx = -1;
@@ -319,10 +307,10 @@ void *handle_client(void *arg) {
 
 
                     snprintf(response, sizeof(response), "NOTIFY:GAME_START %d X %s\n", game_id_to_join, clients[client_index].name);
-                     if (!send_to_client(games[game_idx].player1_fd, response)) { /* Gestire errore invio? */ }
+                     if (!send_to_client(games[game_idx].player1_fd, response)) {  }
                      snprintf(response, sizeof(response), "NOTIFY:BOARD %s\n", board_str);
-                     if (!send_to_client(games[game_idx].player1_fd, response)) { /* Gestire errore invio? */ }
-                     if (!send_to_client(games[game_idx].player1_fd, "NOTIFY:YOUR_TURN\n")) { /* Gestire errore invio? */ }
+                     if (!send_to_client(games[game_idx].player1_fd, response)) {  }
+                     if (!send_to_client(games[game_idx].player1_fd, "NOTIFY:YOUR_TURN\n")) {  }
 
                 } else {
                     snprintf(response, sizeof(response), "ERROR:Game creator not found for game %d\n", game_id_to_join);
@@ -344,8 +332,7 @@ void *handle_client(void *arg) {
             pthread_mutex_unlock(&client_list_mutex);
             pthread_mutex_unlock(&game_list_mutex);
         }
-         // Comando: MOVE <r> <c>
-        else if (strncmp(buffer, "MOVE ", 5) == 0 && clients[client_index].state == CLIENT_STATE_PLAYING) {
+         else if (strncmp(buffer, "MOVE ", 5) == 0 && clients[client_index].state == CLIENT_STATE_PLAYING) {
             int r, c;
             if (sscanf(buffer + 5, "%d %d", &r, &c) == 2) {
                 int game_idx = -1;
@@ -435,20 +422,17 @@ void *handle_client(void *arg) {
                  if (!send_to_client(client_fd, response)) client_connected = false;
             }
         }
-         // Comando: QUIT (abbandona partita/lobby)
-         // --- MODIFICATO ---
          else if (strcmp(buffer, "QUIT") == 0) {
              LOG("Client %s (fd %d) requested QUIT. Current state: %d\n", clients[client_index].name, client_fd, clients[client_index].state);
 
              ClientState currentState;
-             pthread_mutex_lock(&client_list_mutex); // Lock to read state safely
+             pthread_mutex_lock(&client_list_mutex);
              currentState = clients[client_index].state;
              pthread_mutex_unlock(&client_list_mutex);
 
-             // Se in partita (PLAYING o WAITING), lascia la partita e torna alla lobby
              if (currentState == CLIENT_STATE_PLAYING || currentState == CLIENT_STATE_WAITING) {
                  LOG("Client %s (fd %d) is leaving game %d and returning to lobby.\n", clients[client_index].name, client_fd, clients[client_index].game_id);
-                 int game_to_leave_id = clients[client_index].game_id; // Ottieni ID prima di resettare
+                 int game_to_leave_id = clients[client_index].game_id;
 
                  pthread_mutex_lock(&client_list_mutex);
                  pthread_mutex_lock(&game_list_mutex);
@@ -462,18 +446,16 @@ void *handle_client(void *arg) {
                           opponent_fd = games[game_idx].player1_fd;
                       }
 
-                     // Notifica avversario
                      if (opponent_fd != -1) {
                          send_to_client(opponent_fd, "NOTIFY:OPPONENT_LEFT\n");
                          int opponent_idx = find_client_index(opponent_fd);
                          if (opponent_idx != -1) {
-                             clients[opponent_idx].state = CLIENT_STATE_LOBBY; // Riporta avversario a LOBBY
+                             clients[opponent_idx].state = CLIENT_STATE_LOBBY;
                              clients[opponent_idx].game_id = 0;
                              LOG("Opponent %s (fd %d) moved back to LOBBY.\n", clients[opponent_idx].name, opponent_fd);
                          }
                      }
 
-                     // Resetta stato partita
                      games[game_idx].state = GAME_STATE_EMPTY;
                      games[game_idx].player1_fd = -1;
                      games[game_idx].player2_fd = -1;
@@ -485,35 +467,26 @@ void *handle_client(void *arg) {
                       LOG("Client %s (fd %d) sent QUIT while in game %d, but game not found or finished.\n", clients[client_index].name, client_fd, game_to_leave_id);
                  }
 
-                 // Muovi il client corrente a LOBBY
                  clients[client_index].state = CLIENT_STATE_LOBBY;
                  clients[client_index].game_id = 0;
 
                  pthread_mutex_unlock(&game_list_mutex);
                  pthread_mutex_unlock(&client_list_mutex);
 
-                 // Invia conferma (opzionale, ma aiuta il client a sapere che è tornato in lobby)
-                 // send_to_client(client_fd, "RESP:LEFT_GAME_OK\n");
-
-                 // --- NON DISCONNETTERE IL CLIENT QUI ---
 
              } else {
-                 // Se già in Lobby o Connesso, QUIT significa disconnettere la sessione
                  LOG("Client %s (fd %d) sent QUIT from lobby/connected state. Disconnecting session.\n", clients[client_index].name, client_fd);
-                 client_connected = false; // Forza uscita dal loop e cleanup
+                 client_connected = false;
              }
-             // --- FINE MODIFICA ---
          }
-        // Comando non riconosciuto
         else {
             if (clients[client_index].state != CLIENT_STATE_CONNECTED) {
                  snprintf(response, sizeof(response), "ERROR:Unknown command or invalid state for command: %s\n", buffer);
                  if (!send_to_client(client_fd, response)) client_connected = false;
             }
         }
-    } // End while(client_connected)
+    }
 
-    // --- Cleanup del Client ---
     LOG("Cleaning up client fd %d (index %d, name '%s')\n", client_fd, client_index, clients[client_index].name);
     close(client_fd);
 
@@ -527,13 +500,9 @@ void *handle_client(void *arg) {
     clients[client_index].state = CLIENT_STATE_CONNECTED;
     clients[client_index].name[0] = '\0';
 
-    // Se il client si disconnette (non per QUIT da LOBBY) mentre era in una partita
     if (game_id > 0) {
         int game_idx = find_game_index(game_id);
-        // Controlla se la partita esiste ancora (potrebbe essere stata resettata da un QUIT precedente)
         if (game_idx != -1 && (games[game_idx].state == GAME_STATE_WAITING || games[game_idx].state == GAME_STATE_IN_PROGRESS)) {
-            // Verifica se il client disconnesso era effettivamente in questa partita
-            // (potrebbe esserci una race condition se il gioco viene resettato tra il check e l'azione)
             if (games[game_idx].player1_fd == client_fd || games[game_idx].player2_fd == client_fd) {
                  LOG("Client disconnected while in game %d (index %d). Notifying opponent and cleaning up game.\n", game_id, game_idx);
                  int opponent_fd = -1;
@@ -572,7 +541,6 @@ void *handle_client(void *arg) {
 }
 
 
-// --- Funzione Gestione Segnali ---
 void handle_signal(int signal) {
     keep_running = 0;
     char msg[] = "\n!!! Signal received, initiating server shutdown... !!!\n";
@@ -585,7 +553,6 @@ void handle_signal(int signal) {
 }
 
 
-// --- Funzione Cleanup Globale ---
 void cleanup() {
     LOG("Cleaning up resources...\n");
 
@@ -612,7 +579,7 @@ void cleanup() {
     LOG("Server stopped.\n");
 }
 
-// --- Main ---
+
 int main() {
     struct sockaddr_in address;
     int addrlen = sizeof(address);
@@ -717,7 +684,7 @@ int main() {
         }
         pthread_mutex_unlock(&client_list_mutex);
 
-    } // End while(keep_running)
+    }
 
     cleanup();
     return 0;

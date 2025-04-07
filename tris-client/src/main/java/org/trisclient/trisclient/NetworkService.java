@@ -141,7 +141,7 @@ public class NetworkService {
                 }
             } finally {
                 System.out.println(getCurrentTimestamp() + " - NetworkService (in executor): Entering finally block.");
-                closeResources(); // Chiudi sempre le risorse qui
+                closeResources();
                 System.out.println(getCurrentTimestamp() + " - NetworkService (in executor): Listener task finished.");
             }
         });
@@ -165,7 +165,6 @@ public class NetworkService {
                 System.err.println(getCurrentTimestamp()+" - NetworkService: Listener is NULL when handling disconnection!");
             }
         });
-        // Non chiudere risorse qui, il finally del thread lo fa
     }
 
     private void parseServerMessage(String message, ServerListener currentListener) {
@@ -226,13 +225,9 @@ public class NetworkService {
                     currentListener.onError("Malformed JOIN_OK message from server");
                 }
             }
-            // --- NUOVO: Gestione risposta opzionale a QUIT da gioco ---
             else if (message.startsWith("RESP:LEFT_GAME_OK")) {
-                // Il server conferma che siamo tornati in lobby.
-                // Non serve azione specifica qui, il client ha già iniziato a tornare alla home.
                 System.out.println(getCurrentTimestamp() + " - NetworkService: Received LEFT_GAME_OK confirmation from server.");
             }
-            // --- FINE NUOVO ---
             else if (message.startsWith("NOTIFY:GAME_START ")) {
                 String[] parts = message.substring("NOTIFY:GAME_START ".length()).split(" ");
                 if (parts.length >= 3) {
@@ -315,15 +310,8 @@ public class NetworkService {
     public void sendCreateGame() { sendMessage("CREATE"); }
     public void sendJoinGame(int gameId) { sendMessage("JOIN " + gameId); }
     public void sendMove(int row, int col) { sendMessage("MOVE " + row + " " + col); }
-    public void sendQuit() { sendMessage("QUIT"); } // Usato sia per lasciare partita che per uscire da lobby
+    public void sendQuit() { sendMessage("QUIT"); }
 
-
-    // --- MODIFICATO: Rimosso invio di QUIT ---
-    /**
-     * Chiamato dall'applicazione (es. alla chiusura della finestra) per chiudere la connessione.
-     * Questa azione NON invia più QUIT al server, chiude solo le risorse locali.
-     * Il server rileverà la disconnessione dal read error o EOF.
-     */
     public void disconnect() {
         System.out.println(getCurrentTimestamp() + " - NetworkService: disconnect() CALLED (Window Close/App Exit).");
         if (!running) {
@@ -331,17 +319,12 @@ public class NetworkService {
             return;
         }
 
-        // NON INVIARE QUIT QUI - Il server gestirà la disconnessione del socket
-        // sendQuit();
-
-        closeResources(); // Chiudi socket/stream locali (interrompe thread lettore)
-        shutdownExecutor(); // Tenta shutdown pulito del thread pool
-        handleDisconnection("Disconnected by client"); // Notifica il listener e imposta running=false
+        closeResources();
+        shutdownExecutor();
+        handleDisconnection("Disconnected by client");
 
         System.out.println(getCurrentTimestamp() + " - NetworkService: disconnect() finished.");
     }
-    // --- FINE MODIFICA ---
-
 
     private synchronized void closeResources() {
         System.out.println(getCurrentTimestamp() + " - NetworkService: closeResources() CALLED.");
@@ -387,8 +370,6 @@ public class NetworkService {
                 networkExecutor.shutdownNow();
                 Thread.currentThread().interrupt();
             }
-        } else {
-            // System.out.println(getCurrentTimestamp() + " - NetworkService: shutdownExecutor - Executor was null or already shut down.");
         }
     }
 
