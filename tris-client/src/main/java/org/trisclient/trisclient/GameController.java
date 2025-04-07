@@ -190,7 +190,8 @@ public class GameController implements NetworkService.ServerListener {
             gridPane.setDisable(true);
             System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): handleBoardUpdateInternal - Grid disabled (not my turn).");
         } else {
-            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): handleBoardUpdateInternal - Grid state untouched (my turn).");
+            gridPane.setDisable(false);
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): handleBoardUpdateInternal - Grid state enabled (my turn).");
         }
         System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): handleBoardUpdateInternal END | Grid disabled: " + gridPane.isDisabled());
     }
@@ -340,8 +341,8 @@ public class GameController implements NetworkService.ServerListener {
             myTurn = false;
             gridPane.setDisable(true);
         } else if (message.contains("Invalid move")) {
-            TextTurno.setText("Mossa non valida! Riprova.");
-            if (myTurn) {
+            TextTurno.setText("Mossa non valida! ("+ message +") Riprova.");
+            if (myTurn) { // Should still be my turn if server rejected move
                 gridPane.setDisable(false);
                 int enabledCount = 0;
                 for(int r=0; r<3; r++) {
@@ -355,14 +356,17 @@ public class GameController implements NetworkService.ServerListener {
                 System.out.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): Re-enabled grid and " + enabledCount + " empty buttons after invalid move (myTurn was true).");
             } else {
                 System.out.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): Invalid move error received, but myTurn was already false. Grid remains disabled.");
-                gridPane.setDisable(true);
+                gridPane.setDisable(true); // Keep disabled just in case
             }
         } else {
+            // For other errors, show message but keep the game going? Or return to lobby?
+            // Current: Show error, disable grid. User might need to quit manually.
             showError("Errore dal Server", message);
             TextTurno.setText("Errore: " + message);
             gridPane.setDisable(true);
         }
     }
+
 
     @FXML
     private void handleLeaveGame() {
@@ -402,6 +406,7 @@ public class GameController implements NetworkService.ServerListener {
             System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Leave game clicked but game already inactive.");
             if (returnToHomeCallback != null) {
                 System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Callback exists, return likely already triggered.");
+                Platform.runLater(() -> returnToHomeCallback.accept("VOLUNTARY_LEAVE")); // Ensure return even if already inactive
             } else {
                 System.err.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Clicked leave on inactive game AND callback is null!");
             }
@@ -442,12 +447,19 @@ public class GameController implements NetworkService.ServerListener {
         }
     }
 
+
     @Override public void onConnected() { System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received onConnected UNEXPECTEDLY !!!"); }
     @Override public void onNameRequested() { System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received NameRequested UNEXPECTEDLY !!!"); }
     @Override public void onNameAccepted() { System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received NameAccepted UNEXPECTEDLY !!!"); }
     @Override public void onGamesList(List<NetworkService.GameInfo> games) { System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received GamesList UNEXPECTEDLY !!!"); }
     @Override public void onGameCreated(int gameId) { System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received GameCreated UNEXPECTEDLY for game "+gameId+" !!!"); }
-    @Override public void onJoinOk(int gameId, char symbol, String opponentName) { System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received JoinOk UNEXPECTEDLY for game "+gameId+" !!!"); }
+
+    @Override public void onJoinRequestSent(int gameId) { System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received onJoinRequestSent UNEXPECTEDLY !!!"); }
+    @Override public void onJoinRequestReceived(String requesterName) { System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received onJoinRequestReceived UNEXPECTEDLY !!!"); }
+    @Override public void onJoinAccepted(int gameId, char symbol, String opponentName) { System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received JoinAccepted UNEXPECTEDLY for game "+gameId+" !!!"); }
+    @Override public void onJoinRejected(int gameId, String creatorName) { System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received JoinRejected UNEXPECTEDLY for game "+gameId+" !!!"); }
+    @Override public void onActionConfirmed(String message) { System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received ActionConfirmed UNEXPECTEDLY !!!"); }
+
     @Override public void onGameStart(int gameId, char symbol, String opponentName) {
         System.out.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): Received GameStart. Target GameID="+gameId+", My GameID="+this.gameId+". Current gameActive="+gameActive.get()+", myTurn="+myTurn);
         if (this.gameId == gameId && gameActive.get()) {

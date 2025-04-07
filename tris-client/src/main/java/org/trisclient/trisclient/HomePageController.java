@@ -7,10 +7,7 @@ import javafx.fxml.Initializable;
 import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
-import javafx.scene.control.Alert;
-import javafx.scene.control.Button;
-import javafx.scene.control.Label;
-import javafx.scene.control.TextInputDialog;
+import javafx.scene.control.*;
 import javafx.scene.layout.FlowPane;
 import javafx.stage.Stage;
 import javafx.stage.Window;
@@ -337,12 +334,83 @@ public class HomePageController implements Initializable, NetworkService.ServerL
     }
 
     @Override
-    public void onJoinOk(int gameId, char symbol, String opponentName) {
-        System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onJoinOk for game " + gameId + ". Symbol: " + symbol + ", Opponent: " + opponentName);
-        Platform.runLater(() -> labelStatus.setText("Joined game " + gameId + " vs " + opponentName + ". You are " + symbol + ". Waiting for start..."));
-        setButtonsDisabled(true);
-        disableJoinButtons();
+    public void onJoinRequestSent(int gameId) {
+        System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onJoinRequestSent for game " + gameId);
+        Platform.runLater(() -> {
+            labelStatus.setText("Request sent for game " + gameId + ". Waiting for creator approval...");
+            setButtonsDisabled(true);
+            disableJoinButtons();
+        });
     }
+
+    @Override
+    public void onJoinRequestReceived(String requesterName) {
+        System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onJoinRequestReceived from " + requesterName);
+        Platform.runLater(() -> {
+            if (networkServiceInstance == null || !networkServiceInstance.isConnected()) return;
+
+            Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+            alert.setTitle("Join Request");
+            alert.setHeaderText("Player '" + requesterName + "' wants to join your game.");
+            alert.setContentText("Do you want to accept?");
+
+            ButtonType buttonTypeAccept = new ButtonType("Accept");
+            ButtonType buttonTypeReject = new ButtonType("Reject");
+            alert.getButtonTypes().setAll(buttonTypeAccept, buttonTypeReject);
+
+            Stage owner = getCurrentStage();
+            if (owner != null) alert.initOwner(owner);
+
+            Optional<ButtonType> result = alert.showAndWait();
+            if (result.isPresent()) {
+                if (result.get() == buttonTypeAccept) {
+                    System.out.println(getCurrentTimestamp() + " - HomePageController: User chose ACCEPT for " + requesterName);
+                    labelStatus.setText("Accepting " + requesterName + "...");
+                    networkServiceInstance.sendAcceptRequest(requesterName);
+                } else {
+                    System.out.println(getCurrentTimestamp() + " - HomePageController: User chose REJECT for " + requesterName);
+                    labelStatus.setText("Rejecting " + requesterName + "...");
+                    networkServiceInstance.sendRejectRequest(requesterName);
+                }
+            } else {
+                System.out.println(getCurrentTimestamp() + " - HomePageController: User closed the join request dialog for " + requesterName);
+                labelStatus.setText("Rejecting " + requesterName + " (dialog closed)...");
+                networkServiceInstance.sendRejectRequest(requesterName);
+            }
+        });
+    }
+
+    @Override
+    public void onJoinAccepted(int gameId, char symbol, String opponentName) {
+        System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onJoinAccepted for game " + gameId + ". Symbol: " + symbol + ", Opponent: " + opponentName);
+        Platform.runLater(() -> {
+            labelStatus.setText("Join request for game " + gameId + " ACCEPTED! Starting game...");
+        });
+        // Wait for onGameStart
+    }
+
+    @Override
+    public void onJoinRejected(int gameId, String creatorName) {
+        System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onJoinRejected for game " + gameId + " by " + creatorName);
+        Platform.runLater(() -> {
+            labelStatus.setText("Your request to join game " + gameId + " was rejected by " + creatorName + ".");
+            showError("Join Rejected", "Your request to join game " + gameId + " was rejected by the creator (" + creatorName + ").");
+            setButtonsDisabled(false);
+            handleRefresh();
+        });
+    }
+
+    @Override
+    public void onActionConfirmed(String message) {
+        System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onActionConfirmed: " + message);
+        Platform.runLater(() -> {
+            if (message.startsWith("Rejected request from")) {
+                labelStatus.setText(message + ". Waiting for new players...");
+                if(buttonRefresh != null) buttonRefresh.setDisable(false);
+            }
+        });
+    }
+
 
     @Override
     public void onGameStart(int gameId, char symbol, String opponentName) {
@@ -435,11 +503,9 @@ public class HomePageController implements Initializable, NetworkService.ServerL
 
             boolean stillConnected = (networkServiceInstance != null && networkServiceInstance.isConnected());
             if(stillConnected){
-                if (message.contains("full") || message.contains("not found") || message.contains("Invalid") || message.contains("Cannot join") || message.contains("not waiting")) {
-                    setButtonsDisabled(false);
-                    networkServiceInstance.sendListRequest();
-                } else {
-                    setButtonsDisabled(false);
+                setButtonsDisabled(false);
+                if(!message.contains("Server is shutting down")) { // Don't refresh if server is shutting down
+                    handleRefresh(); // Try to refresh the list on most errors if still connected
                 }
             } else {
                 setButtonsDisabled(true);

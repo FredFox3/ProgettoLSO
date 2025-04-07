@@ -20,7 +20,7 @@
 typedef enum {
     CLIENT_STATE_CONNECTED,
     CLIENT_STATE_LOBBY,
-    CLIENT_STATE_WAITING,
+    CLIENT_STATE_WAITING, // Creatore in attesa o Richiedente in attesa di risposta
     CLIENT_STATE_PLAYING
 } ClientState;
 
@@ -42,13 +42,15 @@ typedef struct {
     int current_turn_fd;
     char player1_name[MAX_NAME_LEN];
     char player2_name[MAX_NAME_LEN];
+    int pending_joiner_fd;
+    char pending_joiner_name[MAX_NAME_LEN];
 } GameInfo;
 
 typedef struct {
     int fd;
     ClientState state;
     char name[MAX_NAME_LEN];
-    int game_id;
+    int game_id; // 0 if not in game or waiting, >0 otherwise
     bool active;
 } ClientInfo;
 
@@ -102,7 +104,7 @@ void board_to_string(Cell board[3][3], char *out_str, size_t max_len) {
             switch (board[r][c]) {
                 case CELL_X: cell_char = 'X'; break;
                 case CELL_O: cell_char = 'O'; break;
-                default:     strcpy(out_str + strlen(out_str), "EMPTY"); goto next_cell;
+                default: strcpy(out_str + strlen(out_str), "EMPTY"); goto next_cell;
             }
             char cell_str[3];
             snprintf(cell_str, sizeof(cell_str), "%c", cell_char);
@@ -204,7 +206,6 @@ void *handle_client(void *arg) {
             client_fd, client_index, clients[client_index].name, clients[client_index].state, buffer);
 
 
-
         if (strncmp(buffer, "NAME ", 5) == 0 && clients[client_index].state == CLIENT_STATE_CONNECTED) {
             pthread_mutex_lock(&client_list_mutex);
             strncpy(clients[client_index].name, buffer + 5, MAX_NAME_LEN - 1);
@@ -253,6 +254,9 @@ void *handle_client(void *arg) {
                 games[game_idx].current_turn_fd = -1;
                 strncpy(games[game_idx].player1_name, clients[client_index].name, MAX_NAME_LEN);
                 games[game_idx].player2_name[0] = '\0';
+                games[game_idx].pending_joiner_fd = -1;
+                games[game_idx].pending_joiner_name[0] = '\0';
+
 
                 pthread_mutex_lock(&client_list_mutex);
                 clients[client_index].state = CLIENT_STATE_WAITING;
@@ -268,10 +272,10 @@ void *handle_client(void *arg) {
             pthread_mutex_unlock(&game_list_mutex);
             if (!send_to_client(client_fd, response)) client_connected = false;
         }
-        else if (strncmp(buffer, "JOIN ", 5) == 0 && clients[client_index].state == CLIENT_STATE_LOBBY) {
-            int game_id_to_join = atoi(buffer + 5);
+        else if (strncmp(buffer, "JOIN_REQUEST ", 13) == 0 && clients[client_index].state == CLIENT_STATE_LOBBY) {
+            int game_id_to_join = atoi(buffer + 13);
             int game_idx = -1;
-            int player1_idx = -1;
+            int creator_fd = -1;
 
             pthread_mutex_lock(&game_list_mutex);
             pthread_mutex_lock(&client_list_mutex);
@@ -279,51 +283,51 @@ void *handle_client(void *arg) {
             game_idx = find_game_index(game_id_to_join);
 
             if (game_idx != -1 && games[game_idx].state == GAME_STATE_WAITING && games[game_idx].player1_fd != client_fd) {
-                player1_idx = find_client_index(games[game_idx].player1_fd);
+                if (games[game_idx].pending_joiner_fd == -1) {
+                    creator_fd = games[game_idx].player1_fd;
+                    int creator_client_idx = find_client_index(creator_fd);
 
-                if (player1_idx != -1) {
-                    games[game_idx].player2_fd = client_fd;
-                    strncpy(games[game_idx].player2_name, clients[client_index].name, MAX_NAME_LEN);
-                    games[game_idx].state = GAME_STATE_IN_PROGRESS;
-                    games[game_idx].current_turn_fd = games[game_idx].player1_fd;
+                    if (creator_client_idx != -1) {
 
-                    clients[client_index].state = CLIENT_STATE_PLAYING;
-                    clients[client_index].game_id = game_id_to_join;
-                    clients[player1_idx].state = CLIENT_STATE_PLAYING;
+                        games[game_idx].pending_joiner_fd = client_fd;
+                        strncpy(games[game_idx].pending_joiner_name, clients[client_index].name, MAX_NAME_LEN - 1);
+                        games[game_idx].pending_joiner_name[MAX_NAME_LEN - 1] = '\0';
 
-                    LOG("Client %s (fd %d) joined game %d (index %d) created by %s (fd %d)\n",
-                        clients[client_index].name, client_fd, game_id_to_join, game_idx,
-                        games[game_idx].player1_name, games[game_idx].player1_fd);
-
-                    char board_str[BUFFER_SIZE];
-                    board_to_string(games[game_idx].board, board_str, sizeof(board_str));
-
-                    snprintf(response, sizeof(response), "RESP:JOIN_OK %d O %s\n", game_id_to_join, games[game_idx].player1_name);
-                    if (!send_to_client(client_fd, response)) client_connected = false;
-                    snprintf(response, sizeof(response), "NOTIFY:GAME_START %d O %s\n", game_id_to_join, games[game_idx].player1_name);
-                     if (!send_to_client(client_fd, response)) client_connected = false;
-                     snprintf(response, sizeof(response), "NOTIFY:BOARD %s\n", board_str);
-                     if (!send_to_client(client_fd, response)) client_connected = false;
+                        LOG("Client %s (fd %d) requested to join game %d (index %d). Notifying creator %s (fd %d)\n",
+                            clients[client_index].name, client_fd, game_id_to_join, game_idx,
+                            games[game_idx].player1_name, creator_fd);
 
 
-                    snprintf(response, sizeof(response), "NOTIFY:GAME_START %d X %s\n", game_id_to_join, clients[client_index].name);
-                     if (!send_to_client(games[game_idx].player1_fd, response)) {  }
-                     snprintf(response, sizeof(response), "NOTIFY:BOARD %s\n", board_str);
-                     if (!send_to_client(games[game_idx].player1_fd, response)) {  }
-                     if (!send_to_client(games[game_idx].player1_fd, "NOTIFY:YOUR_TURN\n")) {  }
-
+                        snprintf(response, sizeof(response), "NOTIFY:JOIN_REQUEST %s\n", clients[client_index].name);
+                        if (!send_to_client(creator_fd, response)) {
+                            LOG("Failed to send join request notification to creator fd %d. Cancelling request.\n", creator_fd);
+                            games[game_idx].pending_joiner_fd = -1;
+                            games[game_idx].pending_joiner_name[0] = '\0';
+                            snprintf(response, sizeof(response), "ERROR:Could not notify game creator (maybe disconnected?).\n");
+                            if (!send_to_client(client_fd, response)) client_connected = false;
+                        } else {
+                            snprintf(response, sizeof(response), "RESP:REQUEST_SENT %d\n", game_id_to_join);
+                            if (!send_to_client(client_fd, response)) client_connected = false;
+                        }
+                    } else {
+                         LOG("ERROR: Creator (fd %d) for game %d not found in client list during join request!\n", creator_fd, game_id_to_join);
+                         snprintf(response, sizeof(response), "ERROR:Game creator seems disconnected. Cannot join game %d\n", game_id_to_join);
+                         if (!send_to_client(client_fd, response)) client_connected = false;
+                    }
                 } else {
-                    snprintf(response, sizeof(response), "ERROR:Game creator not found for game %d\n", game_id_to_join);
-                     if (!send_to_client(client_fd, response)) client_connected = false;
-                     LOG("ERROR: Creator (fd %d) for game %d not found in client list!\n", games[game_idx].player1_fd, game_id_to_join);
+                    LOG("Game %d (index %d) already has a pending join request from %s (fd %d). Rejecting new request from %s (fd %d)\n",
+                        game_id_to_join, game_idx,
+                        games[game_idx].pending_joiner_name, games[game_idx].pending_joiner_fd,
+                        clients[client_index].name, client_fd);
+                    snprintf(response, sizeof(response), "ERROR:Game creator is busy with another request for game %d\n", game_id_to_join);
+                    if (!send_to_client(client_fd, response)) client_connected = false;
                 }
-
             } else {
                  if (game_idx != -1 && games[game_idx].player1_fd == client_fd) {
-                     snprintf(response, sizeof(response), "ERROR:Cannot join your own game %d\n", game_id_to_join);
-                 } else if (game_idx != -1) {
+                     snprintf(response, sizeof(response), "ERROR:Cannot request to join your own game %d\n", game_id_to_join);
+                 } else if (game_idx != -1 && games[game_idx].state != GAME_STATE_WAITING) {
                      snprintf(response, sizeof(response), "ERROR:Game %d is not waiting for players\n", game_id_to_join);
-                 } else {
+                 } else if (game_idx == -1) {
                     snprintf(response, sizeof(response), "ERROR:Game %d not found\n", game_id_to_join);
                  }
                 if (!send_to_client(client_fd, response)) client_connected = false;
@@ -332,7 +336,132 @@ void *handle_client(void *arg) {
             pthread_mutex_unlock(&client_list_mutex);
             pthread_mutex_unlock(&game_list_mutex);
         }
-         else if (strncmp(buffer, "MOVE ", 5) == 0 && clients[client_index].state == CLIENT_STATE_PLAYING) {
+        else if (strncmp(buffer, "ACCEPT ", 7) == 0 && clients[client_index].state == CLIENT_STATE_WAITING) {
+            char accepted_player_name[MAX_NAME_LEN];
+            strncpy(accepted_player_name, buffer + 7, MAX_NAME_LEN - 1);
+            accepted_player_name[MAX_NAME_LEN - 1] = '\0';
+
+            int game_idx = -1;
+            int joiner_fd = -1;
+            int joiner_client_idx = -1;
+            int my_game_id = clients[client_index].game_id;
+
+            pthread_mutex_lock(&game_list_mutex);
+            pthread_mutex_lock(&client_list_mutex);
+
+            game_idx = find_game_index(my_game_id);
+
+            if (game_idx != -1 && games[game_idx].player1_fd == client_fd) {
+                if (games[game_idx].pending_joiner_fd != -1 && strcmp(games[game_idx].pending_joiner_name, accepted_player_name) == 0) {
+
+                    joiner_fd = games[game_idx].pending_joiner_fd;
+                    joiner_client_idx = find_client_index(joiner_fd);
+
+                    if (joiner_client_idx != -1 && clients[joiner_client_idx].state == CLIENT_STATE_LOBBY) {
+                         LOG("Creator %s (fd %d) ACCEPTED join request from %s (fd %d) for game %d\n",
+                            clients[client_index].name, client_fd, accepted_player_name, joiner_fd, my_game_id);
+
+
+                        games[game_idx].player2_fd = joiner_fd;
+                        strncpy(games[game_idx].player2_name, games[game_idx].pending_joiner_name, MAX_NAME_LEN);
+                        games[game_idx].state = GAME_STATE_IN_PROGRESS;
+                        games[game_idx].current_turn_fd = games[game_idx].player1_fd;
+
+
+                        games[game_idx].pending_joiner_fd = -1;
+                        games[game_idx].pending_joiner_name[0] = '\0';
+
+
+                        clients[client_index].state = CLIENT_STATE_PLAYING;
+                        clients[joiner_client_idx].state = CLIENT_STATE_PLAYING;
+                        clients[joiner_client_idx].game_id = my_game_id;
+
+
+                        char board_str[BUFFER_SIZE];
+                        board_to_string(games[game_idx].board, board_str, sizeof(board_str));
+
+
+                        snprintf(response, sizeof(response), "RESP:JOIN_ACCEPTED %d O %s\n", my_game_id, games[game_idx].player1_name);
+                        send_to_client(joiner_fd, response);
+                        snprintf(response, sizeof(response), "NOTIFY:GAME_START %d O %s\n", my_game_id, games[game_idx].player1_name);
+                        send_to_client(joiner_fd, response);
+                        snprintf(response, sizeof(response), "NOTIFY:BOARD %s\n", board_str);
+                        send_to_client(joiner_fd, response);
+
+
+                        snprintf(response, sizeof(response), "NOTIFY:GAME_START %d X %s\n", my_game_id, games[game_idx].player2_name);
+                        if (!send_to_client(client_fd, response)) { client_connected = false; }
+                        snprintf(response, sizeof(response), "NOTIFY:BOARD %s\n", board_str);
+                        if (!send_to_client(client_fd, response)) { client_connected = false; }
+                        if (!send_to_client(client_fd, "NOTIFY:YOUR_TURN\n")) { client_connected = false; }
+
+                    } else {
+                        LOG("ERROR: Accepted joiner %s (fd %d) not found or not in lobby state for game %d. Clearing pending request.\n", accepted_player_name, joiner_fd, my_game_id);
+                        snprintf(response, sizeof(response), "ERROR:The player %s disconnected or is busy.\n", accepted_player_name);
+                        if (!send_to_client(client_fd, response)) client_connected = false;
+                        games[game_idx].pending_joiner_fd = -1;
+                        games[game_idx].pending_joiner_name[0] = '\0';
+                    }
+                } else {
+                    LOG("ERROR: No valid pending request found for name '%s' in game %d when creator %s tried to ACCEPT.\n", accepted_player_name, my_game_id, clients[client_index].name);
+                    snprintf(response, sizeof(response), "ERROR:No pending request found for '%s' or request expired.\n", accepted_player_name);
+                    if (!send_to_client(client_fd, response)) client_connected = false;
+                }
+            } else {
+                LOG("ERROR: Client %s (fd %d) tried to ACCEPT for game %d but is not creator or game not waiting.\n", clients[client_index].name, client_fd, my_game_id);
+                snprintf(response, sizeof(response), "ERROR:Cannot accept request for this game (not creator or game not ready).\n");
+                if (!send_to_client(client_fd, response)) client_connected = false;
+            }
+
+            pthread_mutex_unlock(&client_list_mutex);
+            pthread_mutex_unlock(&game_list_mutex);
+        }
+         else if (strncmp(buffer, "REJECT ", 7) == 0 && clients[client_index].state == CLIENT_STATE_WAITING) {
+            char rejected_player_name[MAX_NAME_LEN];
+            strncpy(rejected_player_name, buffer + 7, MAX_NAME_LEN - 1);
+            rejected_player_name[MAX_NAME_LEN - 1] = '\0';
+
+            int game_idx = -1;
+            int joiner_fd = -1;
+            int my_game_id = clients[client_index].game_id;
+
+            pthread_mutex_lock(&game_list_mutex);
+            pthread_mutex_lock(&client_list_mutex);
+
+            game_idx = find_game_index(my_game_id);
+
+            if (game_idx != -1 && games[game_idx].player1_fd == client_fd) {
+                 if (games[game_idx].pending_joiner_fd != -1 && strcmp(games[game_idx].pending_joiner_name, rejected_player_name) == 0) {
+                     joiner_fd = games[game_idx].pending_joiner_fd;
+
+                     LOG("Creator %s (fd %d) REJECTED join request from %s (fd %d) for game %d\n",
+                         clients[client_index].name, client_fd, rejected_player_name, joiner_fd, my_game_id);
+
+                     snprintf(response, sizeof(response), "RESP:JOIN_REJECTED %d %s\n", my_game_id, clients[client_index].name);
+                     send_to_client(joiner_fd, response);
+
+                     games[game_idx].pending_joiner_fd = -1;
+                     games[game_idx].pending_joiner_name[0] = '\0';
+
+
+                     snprintf(response, sizeof(response), "RESP:REJECT_OK %s\n", rejected_player_name);
+                     if (!send_to_client(client_fd, response)) client_connected = false;
+
+                 } else {
+                    LOG("ERROR: No valid pending request found for name '%s' in game %d when creator %s tried to REJECT.\n", rejected_player_name, my_game_id, clients[client_index].name);
+                    snprintf(response, sizeof(response), "ERROR:No pending request found for '%s' or request expired.\n", rejected_player_name);
+                    if (!send_to_client(client_fd, response)) client_connected = false;
+                }
+            } else {
+                LOG("ERROR: Client %s (fd %d) tried to REJECT for game %d but is not creator or game not waiting.\n", clients[client_index].name, client_fd, my_game_id);
+                snprintf(response, sizeof(response), "ERROR:Cannot reject request for this game (not creator or game not ready).\n");
+                if (!send_to_client(client_fd, response)) client_connected = false;
+            }
+
+            pthread_mutex_unlock(&client_list_mutex);
+            pthread_mutex_unlock(&game_list_mutex);
+        }
+        else if (strncmp(buffer, "MOVE ", 5) == 0 && clients[client_index].state == CLIENT_STATE_PLAYING) {
             int r, c;
             if (sscanf(buffer + 5, "%d %d", &r, &c) == 2) {
                 int game_idx = -1;
@@ -410,6 +539,13 @@ void *handle_client(void *arg) {
                         pthread_mutex_unlock(&client_list_mutex);
 
                          games[game_idx].state = GAME_STATE_EMPTY;
+                         games[game_idx].player1_fd = -1;
+                         games[game_idx].player2_fd = -1;
+                         games[game_idx].current_turn_fd = -1;
+                         games[game_idx].player1_name[0] = '\0';
+                         games[game_idx].player2_name[0] = '\0';
+                         games[game_idx].pending_joiner_fd = -1;
+                         games[game_idx].pending_joiner_name[0] = '\0';
 
                     } else {
                          if (opponent_fd != -1) send_to_client(opponent_fd, "NOTIFY:YOUR_TURN\n");
@@ -426,25 +562,31 @@ void *handle_client(void *arg) {
              LOG("Client %s (fd %d) requested QUIT. Current state: %d\n", clients[client_index].name, client_fd, clients[client_index].state);
 
              ClientState currentState;
+             int currentGameId;
              pthread_mutex_lock(&client_list_mutex);
              currentState = clients[client_index].state;
+             currentGameId = clients[client_index].game_id;
              pthread_mutex_unlock(&client_list_mutex);
 
+
              if (currentState == CLIENT_STATE_PLAYING || currentState == CLIENT_STATE_WAITING) {
-                 LOG("Client %s (fd %d) is leaving game %d and returning to lobby.\n", clients[client_index].name, client_fd, clients[client_index].game_id);
-                 int game_to_leave_id = clients[client_index].game_id;
+                 LOG("Client %s (fd %d) is leaving game %d and returning to lobby.\n", clients[client_index].name, client_fd, currentGameId);
 
                  pthread_mutex_lock(&client_list_mutex);
                  pthread_mutex_lock(&game_list_mutex);
 
-                 int game_idx = find_game_index(game_to_leave_id);
+                 int game_idx = find_game_index(currentGameId);
                  if (game_idx != -1 && (games[game_idx].state == GAME_STATE_WAITING || games[game_idx].state == GAME_STATE_IN_PROGRESS)) {
                       int opponent_fd = -1;
-                      if (games[game_idx].player1_fd == client_fd) {
-                          opponent_fd = games[game_idx].player2_fd;
-                      } else if (games[game_idx].player2_fd == client_fd) {
+                      int pending_joiner_notify_fd = -1;
+
+                      if (games[game_idx].player1_fd == client_fd) { // Creator is quitting
+                          opponent_fd = games[game_idx].player2_fd; // Opponent in PLAYING state
+                          pending_joiner_notify_fd = games[game_idx].pending_joiner_fd; // Player waiting in WAITING state
+                      } else if (games[game_idx].player2_fd == client_fd) { // Player 2 is quitting
                           opponent_fd = games[game_idx].player1_fd;
                       }
+
 
                      if (opponent_fd != -1) {
                          send_to_client(opponent_fd, "NOTIFY:OPPONENT_LEFT\n");
@@ -455,6 +597,12 @@ void *handle_client(void *arg) {
                              LOG("Opponent %s (fd %d) moved back to LOBBY.\n", clients[opponent_idx].name, opponent_fd);
                          }
                      }
+                     if (pending_joiner_notify_fd != -1) {
+                         snprintf(response, sizeof(response), "ERROR:Game %d was cancelled by the creator.\n", games[game_idx].id);
+                         send_to_client(pending_joiner_notify_fd, response);
+                         LOG("Notified pending joiner %s (fd %d) that game %d was cancelled.\n", games[game_idx].pending_joiner_name, pending_joiner_notify_fd, games[game_idx].id);
+
+                     }
 
                      games[game_idx].state = GAME_STATE_EMPTY;
                      games[game_idx].player1_fd = -1;
@@ -462,10 +610,13 @@ void *handle_client(void *arg) {
                      games[game_idx].player1_name[0] = '\0';
                      games[game_idx].player2_name[0] = '\0';
                      games[game_idx].current_turn_fd = -1;
-                     LOG("Game %d (index %d) reset due to player leaving.\n", game_to_leave_id, game_idx);
+                     games[game_idx].pending_joiner_fd = -1;
+                     games[game_idx].pending_joiner_name[0] = '\0';
+                     LOG("Game %d (index %d) reset due to player leaving.\n", currentGameId, game_idx);
                  } else {
-                      LOG("Client %s (fd %d) sent QUIT while in game %d, but game not found or finished.\n", clients[client_index].name, client_fd, game_to_leave_id);
+                      LOG("Client %s (fd %d) sent QUIT while in game %d, but game not found or finished.\n", clients[client_index].name, client_fd, currentGameId);
                  }
+
 
                  clients[client_index].state = CLIENT_STATE_LOBBY;
                  clients[client_index].game_id = 0;
@@ -476,7 +627,7 @@ void *handle_client(void *arg) {
 
              } else {
                  LOG("Client %s (fd %d) sent QUIT from lobby/connected state. Disconnecting session.\n", clients[client_index].name, client_fd);
-                 client_connected = false;
+                 client_connected = false; // Disconnect the client
              }
          }
         else {
@@ -494,6 +645,8 @@ void *handle_client(void *arg) {
     pthread_mutex_lock(&game_list_mutex);
 
     int game_id = clients[client_index].game_id;
+    int old_state = clients[client_index].state;
+
     clients[client_index].active = false;
     clients[client_index].fd = -1;
     clients[client_index].game_id = 0;
@@ -502,15 +655,28 @@ void *handle_client(void *arg) {
 
     if (game_id > 0) {
         int game_idx = find_game_index(game_id);
-        if (game_idx != -1 && (games[game_idx].state == GAME_STATE_WAITING || games[game_idx].state == GAME_STATE_IN_PROGRESS)) {
-            if (games[game_idx].player1_fd == client_fd || games[game_idx].player2_fd == client_fd) {
-                 LOG("Client disconnected while in game %d (index %d). Notifying opponent and cleaning up game.\n", game_id, game_idx);
+        if (game_idx != -1) {
+             if (games[game_idx].pending_joiner_fd == client_fd) {
+                 LOG("Pending joiner %s (fd %d) disconnected for game %d. Resetting pending status.\n",
+                      games[game_idx].pending_joiner_name, client_fd, game_id);
+                 games[game_idx].pending_joiner_fd = -1;
+                 games[game_idx].pending_joiner_name[0] = '\0';
+             }
+             else if ((games[game_idx].state == GAME_STATE_WAITING || games[game_idx].state == GAME_STATE_IN_PROGRESS) &&
+                       (games[game_idx].player1_fd == client_fd || games[game_idx].player2_fd == client_fd))
+             {
+                 LOG("Client disconnected while in game %d (index %d, state %d). Notifying opponent/pending and cleaning up game.\n",
+                       game_id, game_idx, games[game_idx].state);
                  int opponent_fd = -1;
-                 if (games[game_idx].player1_fd == client_fd && games[game_idx].player2_fd != -1) {
+                 int pending_joiner_notify_fd = -1;
+
+                 if (games[game_idx].player1_fd == client_fd) { // Creator disconnected
                      opponent_fd = games[game_idx].player2_fd;
-                 } else if (games[game_idx].player2_fd == client_fd && games[game_idx].player1_fd != -1) {
+                     pending_joiner_notify_fd = games[game_idx].pending_joiner_fd;
+                 } else if (games[game_idx].player2_fd == client_fd) { // Player 2 disconnected
                      opponent_fd = games[game_idx].player1_fd;
                  }
+
 
                  if (opponent_fd != -1) {
                      send_to_client(opponent_fd, "NOTIFY:OPPONENT_LEFT\n");
@@ -521,6 +687,13 @@ void *handle_client(void *arg) {
                          LOG("Opponent %s (fd %d) moved back to LOBBY due to disconnect.\n", clients[opponent_idx].name, opponent_fd);
                      }
                  }
+                 if (pending_joiner_notify_fd != -1) {
+                     snprintf(response, sizeof(response), "ERROR:Game %d was cancelled because the creator disconnected.\n", games[game_idx].id);
+                     send_to_client(pending_joiner_notify_fd, response);
+                      LOG("Notified pending joiner %s (fd %d) game %d cancelled due to creator disconnect.\n",
+                          games[game_idx].pending_joiner_name, pending_joiner_notify_fd, game_id);
+                 }
+
 
                  games[game_idx].state = GAME_STATE_EMPTY;
                  games[game_idx].player1_fd = -1;
@@ -528,6 +701,8 @@ void *handle_client(void *arg) {
                  games[game_idx].player1_name[0] = '\0';
                  games[game_idx].player2_name[0] = '\0';
                  games[game_idx].current_turn_fd = -1;
+                 games[game_idx].pending_joiner_fd = -1;
+                 games[game_idx].pending_joiner_name[0] = '\0';
                  LOG("Game %d (index %d) reset due to player disconnect.\n", game_id, game_idx);
             }
         }

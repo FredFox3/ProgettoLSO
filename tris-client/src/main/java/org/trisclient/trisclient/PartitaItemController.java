@@ -39,13 +39,15 @@ public class PartitaItemController {
         NetworkService service = HomePageController.networkServiceInstance;
 
         if (service != null && service.isConnected()) {
-            buttonUniscitiPartita.setDisable(true);
-            System.out.println(getCurrentTimestamp() + " - PartitaItemController: Sending JOIN " + gameId);
-            service.sendJoinGame(gameId);
+            buttonUniscitiPartita.setDisable(true); // Disable immediately
+            System.out.println(getCurrentTimestamp() + " - PartitaItemController: Sending JOIN_REQUEST " + gameId);
+            service.sendJoinRequest(gameId);
+            // User now waits for HomePageController to handle the response (accepted/rejected)
+            // Consider adding feedback like updating a status label in HomePageController
         } else {
             System.err.println(getCurrentTimestamp() + " - PartitaItemController: Cannot join, NetworkService not available or not connected.");
             showError("Errore di Connessione", "Impossibile unirsi alla partita. Controlla la connessione al server.");
-            buttonUniscitiPartita.setDisable(false);
+            buttonUniscitiPartita.setDisable(false); // Re-enable if connection failed
         }
     }
 
