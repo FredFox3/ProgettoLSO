@@ -129,19 +129,22 @@ public class GameController implements NetworkService.ServerListener {
         System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Processing cached messages START");
         boolean processedSomething = false;
 
-        String[] boardToProcess = this.cachedBoard;
-        if (boardToProcess != null) {
-            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Found cached board: " + Arrays.toString(boardToProcess) + ". Processing...");
-            this.cachedBoard = null;
-            handleBoardUpdateInternal(boardToProcess);
-            processedSomething = true;
-        }
-
+        // --- PROCESS TURN FIRST ---
         if (this.cachedTurn.getAndSet(false)) {
             System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Found cached turn. Processing...");
             handleYourTurnInternal();
             processedSomething = true;
         }
+
+        // --- PROCESS BOARD SECOND ---
+        String[] boardToProcess = this.cachedBoard;
+        if (boardToProcess != null) {
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Found cached board: " + Arrays.toString(boardToProcess) + ". Processing...");
+            this.cachedBoard = null; // Clear cache after reading
+            handleBoardUpdateInternal(boardToProcess);
+            processedSomething = true;
+        }
+
 
         if (!processedSomething) {
             System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): No cached messages to process.");
@@ -170,7 +173,7 @@ public class GameController implements NetworkService.ServerListener {
             System.err.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): ERROR Invalid board length received: " + boardCells.length);
             return;
         }
-        int emptyCells = 0;
+        int emptyCellsCount = 0; // Changed variable name for clarity
         for (int i = 0; i < 3; i++) {
             for (int j = 0; j < 3; j++) {
                 if (buttons[i][j] == null) {
@@ -178,20 +181,27 @@ public class GameController implements NetworkService.ServerListener {
                     continue;
                 }
                 String symbol = boardCells[i * 3 + j];
-                boolean isEmpty = "EMPTY".equals(symbol);
-                buttons[i][j].setText(isEmpty ? " " : symbol);
-                buttons[i][j].setDisable(!isEmpty);
-                if(isEmpty) emptyCells++;
+                // --- FIX: Check for "-" instead of "EMPTY" ---
+                boolean isEmpty = "-".equals(symbol);
+
+                buttons[i][j].setText(isEmpty ? " " : symbol); // Set " " for empty to allow trim().isEmpty() in handleYourTurn
+                buttons[i][j].setDisable(!isEmpty); // Disable if NOT empty
+
+                if(isEmpty) emptyCellsCount++;
             }
         }
-        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Board UI updated (texts and disabled non-empty). Empty cells: " + emptyCells);
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Board UI updated (texts and disabled non-empty). Empty cells: " + emptyCellsCount); // Log corrected count
 
+        // Now correctly enables/disables the grid based on the myTurn state
+        // (which might have been set by handleYourTurnInternal if it ran first)
         if (!myTurn) {
             gridPane.setDisable(true);
             System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): handleBoardUpdateInternal - Grid disabled (not my turn).");
         } else {
+            // If it's my turn, ensure the grid is enabled, but individual buttons are
+            // still enabled/disabled based on whether they are empty.
             gridPane.setDisable(false);
-            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): handleBoardUpdateInternal - Grid state enabled (my turn).");
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): handleBoardUpdateInternal - Grid state enabled (my turn). Individual buttons state updated.");
         }
         System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): handleBoardUpdateInternal END | Grid disabled: " + gridPane.isDisabled());
     }
