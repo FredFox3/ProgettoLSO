@@ -18,14 +18,14 @@ typedef enum {
     CLIENT_STATE_CONNECTED, // Appena connesso, in attesa di nome
     CLIENT_STATE_LOBBY,     // Ha un nome, nella lobby
     CLIENT_STATE_WAITING,   // Creatore in attesa di P2 o Richiedente in attesa di risposta
-    CLIENT_STATE_PLAYING    // In partita o appena finita in attesa di rematch
+    CLIENT_STATE_PLAYING    // In partita O **in stato post-partita** (inclusa attesa rematch)
 } ClientState;
 
 typedef enum {
     GAME_STATE_EMPTY,       // Slot libero
     GAME_STATE_WAITING,     // Creatore in attesa di P2
     GAME_STATE_IN_PROGRESS, // Partita in corso
-    GAME_STATE_FINISHED     // Partita terminata
+    GAME_STATE_FINISHED     // Partita terminata (in attesa di decisione rematch)
 } GameState;
 
 typedef enum {
@@ -34,21 +34,28 @@ typedef enum {
     CELL_O
 } Cell;
 
+// NUOVO: Stati per la decisione di rematch nel caso di pareggio
+typedef enum {
+    REMATCH_CHOICE_PENDING = 0, // Non ha ancora scelto
+    REMATCH_CHOICE_YES,
+    REMATCH_CHOICE_NO
+} RematchChoice;
+
 // --- Strutture Dati ---
 typedef struct {
     int id;                 // ID univoco della partita
     GameState state;
     Cell board[3][3];
-    int player1_fd;         // -1 se non presente, -2 se disconnesso/uscito
-    int player2_fd;         // -1 se non presente, -2 se disconnesso/uscito
-    int current_turn_fd;    // fd del giocatore di turno, -1 se nessuno
+    int player1_fd;         // -1 se non presente, -2 se disconnesso/uscito prima/durante la partita
+    int player2_fd;         // -1 se non presente, -2 se disconnesso/uscito prima/durante la partita
+    int current_turn_fd;    // fd del giocatore di turno, -1 se nessuno (es. finita)
     char player1_name[MAX_NAME_LEN];
     char player2_name[MAX_NAME_LEN];
     int pending_joiner_fd;  // fd del giocatore in attesa di join (-1 se nessuno)
     char pending_joiner_name[MAX_NAME_LEN];
-    int winner_fd;          // fd del vincitore (-1 se pareggio/non finito/nessuno), -2 se il vincitore si è disconnesso dopo la fine ma prima del rematch
-    bool player1_accepted_rematch; // Flag per rivincita dopo pareggio
-    bool player2_accepted_rematch; // Flag per rivincita dopo pareggio
+    int winner_fd;          // fd del vincitore (-1 se pareggio/non finito/nessuno), -2 se il vincitore si è disconnesso *dopo* la fine ma prima della decisione rematch
+    RematchChoice player1_accepted_rematch; // MODIFICATO: Ora usa enum per tracciare lo stato nel pareggio
+    RematchChoice player2_accepted_rematch; // MODIFICATO: Ora usa enum per tracciare lo stato nel pareggio
 } GameInfo;
 
 typedef struct {

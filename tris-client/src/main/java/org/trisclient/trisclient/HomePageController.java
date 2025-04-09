@@ -322,66 +322,83 @@ public class HomePageController implements Initializable, NetworkService.ServerL
     @Override
     public void onGamesList(List<NetworkService.GameInfo> games) {
         System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onGamesList with " + games.size() + " games.");
+
         Platform.runLater(() -> {
             if (flowPanePartite == null) {
-                System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): FATAL - flowPanePartite is NULL in onGamesList!");
+                System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): FATAL - flowPanePartite is NULL!");
                 return;
             }
 
             boolean amIWaiting = false;
-            int myWaitingGameId = -1;
+            int myWaitingGameId = -1; // Se servisse l'ID per lo status label
 
-            // Popola la lista delle partite nella UI
             flowPanePartite.getChildren().clear();
-            if (games.isEmpty()) {
-                flowPanePartite.getChildren().add(new Label("No games available."));
-            } else {
+            int displayedGamesCount = 0;
+
+            if (games != null) { // Aggiunto check null per sicurezza
                 for (NetworkService.GameInfo gameInfo : games) {
+                    if (gameInfo == null) continue; // Salta eventuali entry nulle
+
+                    // --- CONTROLLO MODIFICATO ---
+                    // Controlla se è la partita di QUESTO utente ed è in stato WAITING
+                    boolean isMyWaitingGame = staticPlayerName != null &&
+                            staticPlayerName.equals(gameInfo.creatorName) &&
+                            "Waiting".equalsIgnoreCase(gameInfo.state);
+
+                    if (isMyWaitingGame) {
+                        // È la mia partita in attesa, segno che sto aspettando ma non la mostro
+                        amIWaiting = true;
+                        myWaitingGameId = gameInfo.id;
+                        System.out.println("onGamesList: Player '" + staticPlayerName + "' is WAITING in game " + gameInfo.id + ". Skipping display.");
+                        continue; // Non aggiungere questa partita alla lista visualizzata
+                    }
+                    // --- FINE CONTROLLO ---
+
+                    // Se non è la mia partita in attesa, la visualizzo
                     try {
                         FXMLLoader loader = new FXMLLoader(getClass().getResource("/org/trisclient/trisclient/partita-item-view.fxml"));
                         Node gameItemNode = loader.load();
                         PartitaItemController controller = loader.getController();
-                        controller.setData(gameInfo.id, gameInfo.creatorName, gameInfo.state);
+
+                        // Passa anche staticPlayerName per disabilitare il join della propria partita in altri stati (sicurezza)
+                        controller.setData(gameInfo.id, gameInfo.creatorName, gameInfo.state, staticPlayerName);
+
                         flowPanePartite.getChildren().add(gameItemNode);
-
-                        // Controlla se IO sono in attesa in QUESTA partita
-                        if ("Waiting".equalsIgnoreCase(gameInfo.state) && staticPlayerName != null && staticPlayerName.equals(gameInfo.creatorName)) {
-                            amIWaiting = true;
-                            myWaitingGameId = gameInfo.id;
-                        }
-
+                        displayedGamesCount++;
                     } catch (Exception e) {
                         System.err.println(getCurrentTimestamp() + " - Error loading/setting PartitaItem: "+e.getMessage());
-                        e.printStackTrace(); // Dettagli errore caricamento item
+                        e.printStackTrace();
                     }
                 }
             }
 
-            // Aggiorna lo stato dell'UI DOPO aver processato la lista
-            boolean isConnected = (networkServiceInstance != null && networkServiceInstance.isConnected());
+            // Aggiungi messaggio se non ci sono partite *visualizzate*
+            if (displayedGamesCount == 0 && !amIWaiting) {
+                // Check aggiunto !amIWaiting per non mostrare "No games" se stiamo aspettando
+                flowPanePartite.getChildren().add(new Label("No other games available."));
+            }
 
+            // Aggiorna lo stato generale dell'UI e dei bottoni
+            boolean isConnected = (networkServiceInstance != null && networkServiceInstance.isConnected());
             if(isConnected){
-                // Se connesso, il bottone Refresh è sempre abilitato
-                if(buttonRefresh != null) buttonRefresh.setDisable(false);
+                if(buttonRefresh != null) buttonRefresh.setDisable(false); // Refresh sempre abilitato se connesso
 
                 if (amIWaiting) {
-                    // Connesso E in attesa -> Disabilita "Crea"
-                    if(buttonCreaPartita != null) buttonCreaPartita.setDisable(true);
-                    labelStatus.setText("Waiting for opponent in your game " + myWaitingGameId + "...");
+                    if(buttonCreaPartita != null) buttonCreaPartita.setDisable(true); // Disabilita "Crea" se sto aspettando
+                    labelStatus.setText("Waiting for opponent in your game " + (myWaitingGameId > 0 ? myWaitingGameId : "") + "...");
                 } else {
-                    // Connesso E NON in attesa -> Abilita "Crea"
-                    if(buttonCreaPartita != null) buttonCreaPartita.setDisable(false);
-                    // Aggiorna status solo se non è già impostato da un ritorno recente
-                    if(labelStatus.getText() == null || !labelStatus.getText().contains("finished") && !labelStatus.getText().contains("Waiting for opponent")) {
-                        labelStatus.setText("Logged in as " + staticPlayerName + ". Games available: " + games.size());
+                    if(buttonCreaPartita != null) buttonCreaPartita.setDisable(false); // Abilita "Crea" se non sto aspettando
+                    // Mantieni status se arriva da un ritorno, altrimenti aggiorna con numero partite
+                    if (labelStatus.getText() == null || labelStatus.getText().isEmpty() || (!labelStatus.getText().contains("Last game finished") && !labelStatus.getText().contains("Returned to Lobby"))) {
+                        labelStatus.setText("Logged in as " + staticPlayerName + ". Available games to join: " + displayedGamesCount);
                     }
                 }
             } else {
-                // Non connesso -> Disabilita tutto
+                // Non connesso
                 if(buttonCreaPartita != null) buttonCreaPartita.setDisable(true);
                 if(buttonRefresh != null) buttonRefresh.setDisable(true);
-                labelStatus.setText("Disconnected.");
-                disableJoinButtons(); // Assicura che anche i join siano disabilitati
+                if(labelStatus!=null && !labelStatus.getText().startsWith("Disconnected")) labelStatus.setText("Disconnected.");
+                disableJoinButtons();
             }
         });
     }
@@ -460,17 +477,22 @@ public class HomePageController implements Initializable, NetworkService.ServerL
 
     @Override
     public void onActionConfirmed(String message) {
-        // Es. per RESP:REJECT_OK
         System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onActionConfirmed: " + message);
         Platform.runLater(() -> {
             if (message.startsWith("Rejected request from")) {
-                labelStatus.setText(message + ". Waiting for new players...");
-                // Riabilita UI e aggiorna lista
-                boolean isConnected = (networkServiceInstance != null && networkServiceInstance.isConnected());
-                setButtonsDisabled(!isConnected); // Abilita in base alla connessione
-                handleRefresh(); // Aggiorna lista dopo rifiuto
+                // Hai appena rifiutato qualcuno, ma SEI ANCORA IN ATTESA
+                labelStatus.setText(message + ". Waiting for other players...");
+                // Assicura che l'UI rifletta lo stato di attesa
+                setButtonsDisabled(true); // Mantiene Crea/Refresh disabilitati
+                // Aggiorna la lista *senza* mostrare la propria partita
+                if (flowPanePartite != null) {
+                    flowPanePartite.getChildren().clear();
+                    flowPanePartite.getChildren().add(new Label("Waiting for opponent..."));
+                }
+                // --- RIMOSSA CHIAMATA handleRefresh() ---
+                System.out.println("onActionConfirmed: User rejected player, remaining in WAITING state.");
             }
-            // Aggiungere altri casi se necessario
+            // Aggiungere altri casi 'RESP:' se necessario
         });
     }
 

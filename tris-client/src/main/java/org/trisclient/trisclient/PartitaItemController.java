@@ -10,14 +10,15 @@ import javafx.stage.Stage;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
-
 public class PartitaItemController {
 
     @FXML private Label labelNumeroPartita;
-    @FXML private Label labelStatoPartita; // NUOVA LABEL
+    @FXML private Label labelStatoPartita;
     @FXML private Button buttonUniscitiPartita;
 
+    // Variabili membro (fields) della classe
     private int gameId;
+    private String creatorName; // <--- VARIABILE MEMBRO AGGIUNTA QUI
 
     private static final DateTimeFormatter TIMESTAMP_FORMATTER =
             DateTimeFormatter.ofPattern("HH:mm:ss.SSS");
@@ -26,77 +27,82 @@ public class PartitaItemController {
         return LocalDateTime.now().format(TIMESTAMP_FORMATTER);
     }
 
-    // Metodo setData aggiornato per accettare e visualizzare lo stato
-    public void setData(int gameId, String creatorName, String state) {
+    // Metodo setData ora può assegnare a this.creatorName
+    public void setData(int gameId, String creatorName, String state, String loggedInPlayerName) {
         this.gameId = gameId;
+        this.creatorName = creatorName; // Ora this.creatorName esiste
+
         Platform.runLater(() -> {
-            labelNumeroPartita.setText("Partita " + gameId + "\n(da " + creatorName + ")");
-            labelStatoPartita.setText(state != null ? state : "N/A"); // Mostra lo stato
-
-            // Cambia stile in base allo stato (opzionale, ma utile)
-            updateStateStyle(state);
-
-            // Disabilita il join se la partita non è in attesa (se mai listassimo altri stati)
-            buttonUniscitiPartita.setDisable(!("Waiting".equalsIgnoreCase(state)));
-
+            if (labelNumeroPartita != null) {
+                labelNumeroPartita.setText("Game " + gameId + "\n(by " + (creatorName != null ? creatorName : "?") + ")");
+            }
+            if (labelStatoPartita != null) {
+                labelStatoPartita.setText(state != null ? state : "N/A");
+                updateStateStyle(state);
+            }
+            if (buttonUniscitiPartita != null) {
+                boolean shouldBeDisabled = true;
+                if ("Waiting".equalsIgnoreCase(state)) {
+                    if (loggedInPlayerName != null && !loggedInPlayerName.equals(creatorName)) {
+                        shouldBeDisabled = false;
+                    }
+                }
+                buttonUniscitiPartita.setDisable(shouldBeDisabled);
+                // System.out.println("Setting Join button for game "+gameId+" ("+this.creatorName+"): Disabled="+shouldBeDisabled+" (MyName: "+loggedInPlayerName+", State: "+state+")");
+            }
         });
     }
 
-    // Metodo per cambiare stile (opzionale)
+    // Metodo per cambiare stile (INVARIATO)
     private void updateStateStyle(String state) {
         if (labelStatoPartita == null) return;
-        // Rimuovi stili precedenti per evitare conflitti
-        labelStatoPartita.getStyleClass().removeAll("state-waiting", "state-inprogress", "state-unknown");
-
-        if ("Waiting".equalsIgnoreCase(state)) {
-            labelStatoPartita.getStyleClass().add("state-waiting");
-            // Puoi impostare il colore direttamente o usare classi CSS:
-            // labelStatoPartita.setStyle("-fx-text-fill: orange;");
-        } else if ("In Progress".equalsIgnoreCase(state)) {
-            labelStatoPartita.getStyleClass().add("state-inprogress");
-            // labelStatoPartita.setStyle("-fx-text-fill: green;");
-        } else {
-            labelStatoPartita.getStyleClass().add("state-unknown");
-            // labelStatoPartita.setStyle("-fx-text-fill: grey;");
-        }
+        labelStatoPartita.getStyleClass().removeAll("state-waiting", "state-inprogress", "state-unknown", "state-finished"); // Aggiunto finished nel remove se usato in css
+        if ("Waiting".equalsIgnoreCase(state)) { labelStatoPartita.getStyleClass().add("state-waiting"); }
+        else if ("In Progress".equalsIgnoreCase(state)) { labelStatoPartita.getStyleClass().add("state-inprogress"); }
+        else if ("Finished".equalsIgnoreCase(state)) { labelStatoPartita.getStyleClass().add("state-finished"); } // Classe per Finished
+        else { labelStatoPartita.getStyleClass().add("state-unknown"); }
     }
 
 
+    // handleUniscitiPartita ora può usare this.creatorName se necessario (anche se usa ancora static)
     @FXML
     private void handleUniscitiPartita() {
-        System.out.println(getCurrentTimestamp() + " - PartitaItemController: Join button clicked for game ID: " + gameId);
+        System.out.println(getCurrentTimestamp() + " - PartitaItemController: Join clicked for game ID: " + gameId + " (creator: " + this.creatorName + ")"); // Usa this.creatorName per il log
+
+        // Usa staticPlayerName per il confronto logico
+        if (HomePageController.staticPlayerName != null && HomePageController.staticPlayerName.equals(this.creatorName)) {
+            System.err.println("Attempted to join own game " + gameId + ". Aborting.");
+            showError("Azione non permessa", "Non puoi unirti alla tua stessa partita.");
+            if(buttonUniscitiPartita != null) buttonUniscitiPartita.setDisable(true);
+            return;
+        }
 
         NetworkService service = HomePageController.networkServiceInstance;
-
         if (service != null && service.isConnected()) {
-            buttonUniscitiPartita.setDisable(true);
+            if (buttonUniscitiPartita != null) buttonUniscitiPartita.setDisable(true);
             System.out.println(getCurrentTimestamp() + " - PartitaItemController: Sending JOIN_REQUEST " + gameId);
             service.sendJoinRequest(gameId);
         } else {
-            System.err.println(getCurrentTimestamp() + " - PartitaItemController: Cannot join, NetworkService not available or not connected.");
-            showError("Errore di Connessione", "Impossibile unirsi alla partita. Controlla la connessione al server.");
-            // Riabilita se fallisce subito
-            // buttonUniscitiPartita.setDisable(false); // Considera se riabilitare qui o attendere onError
+            System.err.println(getCurrentTimestamp() + " - PartitaItemController: Cannot join, NetworkService invalid.");
+            showError("Errore Connessione", "Impossibile unirsi. Controlla connessione.");
+            // Forse riabilitare dopo un timeout? O aspettare onError/lista? Meglio non riabilitare subito.
         }
     }
 
+    // disableJoinButton (INVARIATO)
     public void disableJoinButton() {
-        Platform.runLater(() -> buttonUniscitiPartita.setDisable(true));
+        if (buttonUniscitiPartita != null) {
+            Platform.runLater(() -> buttonUniscitiPartita.setDisable(true));
+        }
     }
 
+    // showError (INVARIATO)
     private void showError(String title, String content) {
-        if (!Platform.isFxApplicationThread()) {
-            Platform.runLater(() -> showError(title, content));
-            return;
-        }
+        if (!Platform.isFxApplicationThread()) { Platform.runLater(() -> showError(title, content)); return; }
         Alert alert = new Alert(Alert.AlertType.ERROR);
-        alert.setTitle(title);
-        alert.setHeaderText(null);
-        alert.setContentText(content);
-        try {
-            Stage owner = (buttonUniscitiPartita != null && buttonUniscitiPartita.getScene() != null) ? (Stage) buttonUniscitiPartita.getScene().getWindow() : null;
-            if (owner != null) alert.initOwner(owner);
-        } catch (Exception e) { System.err.println("Error getting owner stage for error alert: "+e.getMessage());}
+        alert.setTitle(title); alert.setHeaderText(null); alert.setContentText(content);
+        try { Stage owner = (buttonUniscitiPartita != null && buttonUniscitiPartita.getScene() != null) ? (Stage) buttonUniscitiPartita.getScene().getWindow() : null; if (owner != null) alert.initOwner(owner); }
+        catch (Exception e) { /* Ignora errore owner */ }
         alert.showAndWait();
     }
 }

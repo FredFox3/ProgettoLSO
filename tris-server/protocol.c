@@ -132,48 +132,52 @@ void process_list_command(int client_idx) {
 }
 
 void process_create_command(int client_idx) {
-     if (client_idx < 0 || client_idx >= MAX_TOTAL_CLIENTS) return;
-     char response[BUFFER_SIZE];
-     int game_idx = -1;
-     int created_game_id = -1;
-     int client_fd = -1;
-     bool success = false;
-     pthread_mutex_lock(&client_list_mutex);
-     pthread_mutex_lock(&game_list_mutex);
-     if (!clients[client_idx].active || clients[client_idx].state != CLIENT_STATE_LOBBY) {
-         client_fd = clients[client_idx].active ? clients[client_idx].fd : -1;
-         snprintf(response, sizeof(response), "%s\n", ERR_NOT_IN_LOBBY); // Include ERR prefix
-         goto create_cleanup;
-     }
-     client_fd = clients[client_idx].fd;
-     for (int i = 0; i < MAX_GAMES; ++i) {
-         if (games[i].state == GAME_STATE_EMPTY) { game_idx = i; break; }
-     }
-     if (game_idx != -1) {
-         LOG("Using empty game slot %d for new game.\n", game_idx);
-         created_game_id = next_game_id++;
-         games[game_idx].id = created_game_id;
-         games[game_idx].state = GAME_STATE_WAITING;
-         init_board(games[game_idx].board); // Da game_logic.h
-         games[game_idx].player1_fd = client_fd;
-         games[game_idx].player2_fd = -1;
-         games[game_idx].current_turn_fd = -1;
-         games[game_idx].winner_fd = -1;
-         games[game_idx].player1_accepted_rematch = false; // Init
-         games[game_idx].player2_accepted_rematch = false; // Init
-         strncpy(games[game_idx].player1_name, clients[client_idx].name, MAX_NAME_LEN); games[game_idx].player1_name[MAX_NAME_LEN-1] = '\0';
-         games[game_idx].player2_name[0] = '\0';
-         games[game_idx].pending_joiner_fd = -1; games[game_idx].pending_joiner_name[0] = '\0';
-         clients[client_idx].state = CLIENT_STATE_WAITING;
-         clients[client_idx].game_id = created_game_id;
-         snprintf(response, sizeof(response), RESP_CREATED_FMT, created_game_id);
-         success = true;
-     } else {
-         snprintf(response, sizeof(response), "%s\n", ERR_SERVER_FULL_GAMES);
-     }
+    if (client_idx < 0 || client_idx >= MAX_TOTAL_CLIENTS) return;
+    char response[BUFFER_SIZE];
+    int game_idx = -1;
+    int created_game_id = -1;
+    int client_fd = -1;
+    // bool success = false; // --- VARIABILE RIMOSSA ---
+    pthread_mutex_lock(&client_list_mutex);
+    pthread_mutex_lock(&game_list_mutex);
+    if (!clients[client_idx].active || clients[client_idx].state != CLIENT_STATE_LOBBY) {
+        client_fd = clients[client_idx].active ? clients[client_idx].fd : -1;
+        ClientState state = clients[client_idx].active ? clients[client_idx].state : CLIENT_STATE_LOBBY; // Read state safely
+        LOG("Client fd %d (idx %d) sent CREATE in wrong state (%d).\n", client_fd, client_idx, state);
+        snprintf(response, sizeof(response), "%s\n", ERR_NOT_IN_LOBBY); // Include ERR prefix
+        goto create_cleanup;
+    }
+    client_fd = clients[client_idx].fd;
+    for (int i = 0; i < MAX_GAMES; ++i) {
+        if (games[i].state == GAME_STATE_EMPTY) { game_idx = i; break; }
+    }
+    if (game_idx != -1) {
+        LOG("Using empty game slot %d for new game.\n", game_idx);
+        created_game_id = next_game_id++;
+        games[game_idx].id = created_game_id;
+        games[game_idx].state = GAME_STATE_WAITING;
+        init_board(games[game_idx].board); // Da game_logic.h
+        games[game_idx].player1_fd = client_fd;
+        games[game_idx].player2_fd = -1;
+        games[game_idx].current_turn_fd = -1;
+        games[game_idx].winner_fd = -1;
+        games[game_idx].player1_accepted_rematch = REMATCH_CHOICE_PENDING; // Init con Enum
+        games[game_idx].player2_accepted_rematch = REMATCH_CHOICE_PENDING; // Init con Enum
+        strncpy(games[game_idx].player1_name, clients[client_idx].name, MAX_NAME_LEN); games[game_idx].player1_name[MAX_NAME_LEN-1] = '\0';
+        games[game_idx].player2_name[0] = '\0';
+        games[game_idx].pending_joiner_fd = -1; games[game_idx].pending_joiner_name[0] = '\0';
+        clients[client_idx].state = CLIENT_STATE_WAITING;
+        clients[client_idx].game_id = created_game_id;
+        snprintf(response, sizeof(response), RESP_CREATED_FMT, created_game_id);
+        // success = true; // --- ASSEGNAZIONE RIMOSSA ---
+        LOG("Game %d created by %s (fd %d) in slot %d.\n", created_game_id, games[game_idx].player1_name, client_fd, game_idx);
+    } else {
+        snprintf(response, sizeof(response), "%s\n", ERR_SERVER_FULL_GAMES);
+         LOG("Failed to create game for %s (fd %d): No empty game slots.\n", clients[client_idx].name, client_fd);
+    }
 create_cleanup:
-     pthread_mutex_unlock(&game_list_mutex); pthread_mutex_unlock(&client_list_mutex);
-     if (client_fd >= 0) { send_to_client(client_fd, response); }
+    pthread_mutex_unlock(&game_list_mutex); pthread_mutex_unlock(&client_list_mutex);
+    if (client_fd >= 0) { send_to_client(client_fd, response); }
 }
 
 void process_join_request_command(int client_idx, const char* game_id_str) {
@@ -299,79 +303,150 @@ reject_cleanup:
 }
 
 void process_move_command(int client_idx, const char* move_args) {
-     if (client_idx < 0 || client_idx >= MAX_TOTAL_CLIENTS || !move_args) return;
-     int r, c;
-     int player_fd = -1; int opponent_fd = -1;
-     int game_idx = -1; int current_game_id = -1;
-     char response[BUFFER_SIZE]; bool move_made = false; bool game_over = false;
-     char game_over_status_self[20] = {0}; char game_over_status_opponent[20] = {0};
-     int winner_fd_if_game_over = -1; // Necessario per inviare rematch offer fuori lock
-     int opponent_fd_if_game_over = -1; // Necessario per inviare rematch offer fuori lock
+    if (client_idx < 0 || client_idx >= MAX_TOTAL_CLIENTS || !move_args) return;
+    int r, c;
+    int player_fd = -1;
+    int game_idx = -1; int current_game_id = -1;
+    char response[BUFFER_SIZE] = {0};
+    bool move_made = false; bool game_over = false;
+    char game_over_status_self[20] = {0}; char game_over_status_opponent[20] = {0};
+    int winner_fd_if_game_over = -1;
+    int opponent_fd_if_game_over = -1;
+    int opponent_idx_if_game_over = -1; // **NUOVO: Indice dell'avversario**
+    char client_name[MAX_NAME_LEN] = {0};
 
-     if (sscanf(move_args, "%d %d", &r, &c) != 2) {
-         // ... get fd, send error ...
-         return;
-     }
+    if (sscanf(move_args, "%d %d", &r, &c) != 2) {
+        pthread_mutex_lock(&client_list_mutex);
+        if(clients[client_idx].active) player_fd = clients[client_idx].fd;
+        pthread_mutex_unlock(&client_list_mutex);
+        if(player_fd >= 0) snprintf(response, sizeof(response), "%s\n", ERR_INVALID_MOVE_FORMAT);
+        goto move_error_exit;
+    }
 
-     pthread_mutex_lock(&client_list_mutex); pthread_mutex_lock(&game_list_mutex);
-     if (!clients[client_idx].active || clients[client_idx].state != CLIENT_STATE_PLAYING) {
-        // ... get fd, send error ...
+    pthread_mutex_lock(&client_list_mutex); pthread_mutex_lock(&game_list_mutex);
+
+    // Controlli sullo stato del client e della partita (come prima)
+    if (!clients[client_idx].active) { goto move_cleanup; }
+     player_fd = clients[client_idx].fd;
+     strncpy(client_name, clients[client_idx].name, MAX_NAME_LEN-1);
+     client_name[MAX_NAME_LEN - 1] = '\0';
+
+    if (clients[client_idx].state != CLIENT_STATE_PLAYING) {
+        snprintf(response, sizeof(response), "%s\n", ERR_NOT_PLAYING);
+        goto move_cleanup;
+    }
+    current_game_id = clients[client_idx].game_id;
+    if(current_game_id <= 0) {
+        snprintf(response, sizeof(response), "%s\n", ERR_NOT_PLAYING);
+        goto move_cleanup;
+    }
+    game_idx = find_game_index_unsafe(current_game_id);
+    if (game_idx == -1) {
+        snprintf(response, sizeof(response), "%s %d\n", ERR_GAME_NOT_FOUND, current_game_id);
+        // Mettere il client in LOBBY se il suo game_id punta a un gioco inesistente
+        clients[client_idx].state = CLIENT_STATE_LOBBY; clients[client_idx].game_id = 0;
         goto move_cleanup;
      }
-     player_fd = clients[client_idx].fd; current_game_id = clients[client_idx].game_id;
-     game_idx = find_game_index_unsafe(current_game_id);
-     if (game_idx == -1) { /* send error */ goto move_cleanup; }
-     GameInfo* game = &games[game_idx];
-     if (game->state != GAME_STATE_IN_PROGRESS) { /* send error */ goto move_cleanup; }
-     if (game->current_turn_fd != player_fd) { /* send error */ goto move_cleanup; }
-     if (r < 0 || r > 2 || c < 0 || c > 2) { /* send error */ goto move_cleanup; }
-     if (game->board[r][c] != CELL_EMPTY) { /* send error */ goto move_cleanup; }
 
-     Cell player_symbol = (player_fd == game->player1_fd) ? CELL_X : CELL_O;
-     game->board[r][c] = player_symbol;
-     LOG("Player %s moved %d,%d in game %d\n", clients[client_idx].name, r, c, current_game_id);
-     move_made = true;
-     opponent_fd_if_game_over = find_opponent_fd(game, player_fd); // Salva fd avversario PRIMA del game over
-
-     if (check_winner(game->board, player_symbol)) {
-         game_over = true; game->state = GAME_STATE_FINISHED; game->current_turn_fd = -1;
-         game->winner_fd = player_fd; winner_fd_if_game_over = player_fd;
-         strcpy(game_over_status_self, "WIN"); strcpy(game_over_status_opponent, "LOSE");
-     } else if (board_full(game->board)) {
-         game_over = true; game->state = GAME_STATE_FINISHED; game->current_turn_fd = -1;
-         game->winner_fd = -1; winner_fd_if_game_over = -1; // Pareggio
-         strcpy(game_over_status_self, "DRAW"); strcpy(game_over_status_opponent, "DRAW");
-     } else {
-         game->current_turn_fd = opponent_fd_if_game_over; // Passa turno
+    GameInfo* game = &games[game_idx];
+    if (game->state != GAME_STATE_IN_PROGRESS) {
+        snprintf(response, sizeof(response), "%s\n", ERR_GAME_NOT_IN_PROGRESS);
+        goto move_cleanup;
      }
-     // NON CAMBIARE STATO CLIENT QUI
+    if (game->current_turn_fd != player_fd) {
+        snprintf(response, sizeof(response), "%s\n", ERR_NOT_YOUR_TURN);
+        goto move_cleanup;
+     }
+    if (r < 0 || r > 2 || c < 0 || c > 2) {
+        snprintf(response, sizeof(response), "%s\n", ERR_INVALID_MOVE_BOUNDS);
+        goto move_cleanup;
+     }
+    if (game->board[r][c] != CELL_EMPTY) {
+        snprintf(response, sizeof(response), "%s\n", ERR_INVALID_MOVE_OCCUPIED);
+        goto move_cleanup;
+    }
+
+    // --- Mossa valida, aggiorna stato ---
+    Cell player_symbol = (player_fd == game->player1_fd) ? CELL_X : CELL_O;
+    game->board[r][c] = player_symbol;
+    LOG("Player '%s' (fd %d, %c) moved to %d,%d in game %d.\n", client_name, player_fd, (player_symbol==CELL_X ? 'X':'O'), r, c, current_game_id);
+    move_made = true;
+    opponent_fd_if_game_over = find_opponent_fd(game, player_fd);
+    opponent_idx_if_game_over = find_client_index_unsafe(opponent_fd_if_game_over); // **NUOVO: Trova indice avversario**
+
+    // Controlla vittoria / pareggio
+    if (check_winner(game->board, player_symbol)) {
+        game_over = true; game->state = GAME_STATE_FINISHED; game->current_turn_fd = -1;
+        game->winner_fd = player_fd; winner_fd_if_game_over = player_fd;
+        strcpy(game_over_status_self, "WIN"); strcpy(game_over_status_opponent, "LOSE");
+        LOG("Game %d over. Winner: '%s' (fd %d).\n", current_game_id, client_name, player_fd);
+
+        // **MODIFICA**: Se l'avversario (perdente) è ancora valido, mettilo in LOBBY sul server
+        if (opponent_idx_if_game_over != -1 && clients[opponent_idx_if_game_over].active) {
+             LOG("Setting loser '%s' (fd %d, idx %d) state to LOBBY on server.\n",
+                  clients[opponent_idx_if_game_over].name, opponent_fd_if_game_over, opponent_idx_if_game_over);
+             clients[opponent_idx_if_game_over].state = CLIENT_STATE_LOBBY;
+             clients[opponent_idx_if_game_over].game_id = 0;
+        }
+
+    } else if (board_full(game->board)) {
+        game_over = true; game->state = GAME_STATE_FINISHED; game->current_turn_fd = -1;
+        game->winner_fd = -1; winner_fd_if_game_over = -1; // Pareggio
+        strcpy(game_over_status_self, "DRAW"); strcpy(game_over_status_opponent, "DRAW");
+        LOG("Game %d over. Result: DRAW.\n", current_game_id);
+    } else {
+        game->current_turn_fd = opponent_fd_if_game_over;
+        // LOG("Game %d: Turn passed to opponent (fd %d).\n", current_game_id, opponent_fd_if_game_over); // Meno log verboso
+    }
 
 move_cleanup:
-     pthread_mutex_unlock(&game_list_mutex); pthread_mutex_unlock(&client_list_mutex);
+    // Rilascia i lock PRIMA di inviare i messaggi
+    pthread_mutex_unlock(&game_list_mutex);
+    pthread_mutex_unlock(&client_list_mutex);
 
-     if (move_made) {
-         pthread_mutex_lock(&game_list_mutex);
-         if(game_idx != -1) broadcast_game_state(game_idx); // Broadcast se game_idx valido
-         pthread_mutex_unlock(&game_list_mutex);
+    // Invia risposte e notifiche fuori lock
+    if (move_made) {
+        // Blocco per inviare stato board
+        pthread_mutex_lock(&game_list_mutex);
+        if(find_game_index_unsafe(current_game_id) == game_idx) {
+             broadcast_game_state(game_idx);
+        }
+        pthread_mutex_unlock(&game_list_mutex);
 
-         if (game_over) {
-             char notify_self[BUFFER_SIZE], notify_opponent[BUFFER_SIZE];
-             snprintf(notify_self, sizeof(notify_self), "NOTIFY:GAMEOVER %s\n", game_over_status_self);
-             snprintf(notify_opponent, sizeof(notify_opponent), "NOTIFY:GAMEOVER %s\n", game_over_status_opponent);
-             send_to_client(player_fd, notify_self);
-             if (opponent_fd_if_game_over >= 0) send_to_client(opponent_fd_if_game_over, notify_opponent);
+        if (game_over) {
+            char notify_self[BUFFER_SIZE], notify_opponent[BUFFER_SIZE];
+            snprintf(notify_self, sizeof(notify_self), "NOTIFY:GAMEOVER %s\n", game_over_status_self);
+            snprintf(notify_opponent, sizeof(notify_opponent), "NOTIFY:GAMEOVER %s\n", game_over_status_opponent);
 
-             if (winner_fd_if_game_over != -1) { // C'è un vincitore
-                 LOG("Sending rematch offer to winner (fd %d)\n", winner_fd_if_game_over);
-                 send_to_client(winner_fd_if_game_over, CMD_REMATCH_OFFER);
-             } else { // Pareggio
-                 LOG("Sending rematch offer to both players (fd %d, fd %d) for DRAW\n", player_fd, opponent_fd_if_game_over);
-                 send_to_client(player_fd, CMD_REMATCH_OFFER);
-                 if(opponent_fd_if_game_over >= 0) send_to_client(opponent_fd_if_game_over, CMD_REMATCH_OFFER);
-             }
+            send_to_client(player_fd, notify_self);
+            if (opponent_fd_if_game_over >= 0) send_to_client(opponent_fd_if_game_over, notify_opponent);
+
+            // Invia offerta rematch / manda perdente in lobby
+            if (winner_fd_if_game_over != -1) { // C'è un vincitore (W/L case)
+                // Invia offerta SOLO al vincitore
+                LOG("Sending rematch offer to winner '%s' (fd %d) for game %d\n", client_name, winner_fd_if_game_over, current_game_id);
+                send_to_client(winner_fd_if_game_over, CMD_REMATCH_OFFER);
+
+                // **MODIFICA**: Invia comando per tornare in lobby SUBITO al perdente
+                if (opponent_fd_if_game_over >= 0) {
+                     LOG("Sending loser (fd %d) direct 'back to lobby' command (RESP:REMATCH_DECLINED) for game %d\n", opponent_fd_if_game_over, current_game_id);
+                     send_to_client(opponent_fd_if_game_over, RESP_REMATCH_DECLINED); // Questo dirà al client di tornare in lobby
+                }
+
+            } else { // Pareggio
+                LOG("Sending rematch offer to both players (fd %d, fd %d) for DRAW game %d\n", player_fd, opponent_fd_if_game_over, current_game_id);
+                send_to_client(player_fd, CMD_REMATCH_OFFER);
+                if(opponent_fd_if_game_over >= 0) send_to_client(opponent_fd_if_game_over, CMD_REMATCH_OFFER);
+            }
+        }
+    } else { // Errore di mossa, invia messaggio di errore solo al client che ha inviato la mossa
+        move_error_exit:
+        if (player_fd >= 0 && response[0] != '\0') {
+             send_to_client(player_fd, response);
          }
-     } else if (player_fd >= 0) { send_to_client(player_fd, response); }
+    }
 }
+
 
 
 void process_rematch_command(int client_idx, const char* choice) {
@@ -381,22 +456,33 @@ void process_rematch_command(int client_idx, const char* choice) {
     int p1_fd = -1, p2_fd = -1; int p1_idx = -1, p2_idx = -1;
     int opponent_fd = -1, opponent_idx = -1;
     char caller_name[MAX_NAME_LEN];
-    char response_caller[BUFFER_SIZE] = {0}; char notify_opponent[BUFFER_SIZE] = {0};
+    char response_caller[BUFFER_SIZE] = {0};
+    char notify_opponent_on_fail[BUFFER_SIZE] = {0}; // Usato SOLO se P2 sceglie YES ma P1 aveva già detto NO o viceversa
     char error_response[BUFFER_SIZE] = {0};
     char notify_p1_start[BUFFER_SIZE] = {0}; char notify_p2_start[BUFFER_SIZE] = {0};
-    bool send_responses = false; bool restart_draw_game = false;
+    bool send_direct_response_to_caller = false;
+    bool send_fail_response_to_caller_due_to_opponent_no = false;
+    bool restart_draw_game = false;
+    bool reset_game_on_exit = false; // Flag per indicare se resettare lo slot
 
-    pthread_mutex_lock(&client_list_mutex); pthread_mutex_lock(&game_list_mutex);
+    pthread_mutex_lock(&client_list_mutex);
+    pthread_mutex_lock(&game_list_mutex);
 
-    if (!clients[client_idx].active) { goto rematch_cleanup_nolock; } // Uscita sicura senza unlock
+    // Blocco iniziale per ottenere informazioni sul client e sulla partita (come prima)
+    if (!clients[client_idx].active) { goto rematch_cleanup_nolock; }
     caller_fd = clients[client_idx].fd; current_game_id = clients[client_idx].game_id;
     strncpy(caller_name, clients[client_idx].name, MAX_NAME_LEN); caller_name[MAX_NAME_LEN - 1] = '\0';
-
     if (current_game_id <= 0) { snprintf(error_response, sizeof(error_response), "%s\n", ERR_GENERIC); goto rematch_cleanup; }
     game_idx = find_game_index_unsafe(current_game_id);
     if (game_idx == -1) { snprintf(error_response, sizeof(error_response), "%s %d\n", ERR_GAME_NOT_FOUND, current_game_id); goto rematch_cleanup; }
     GameInfo* game = &games[game_idx];
-    if (game->state != GAME_STATE_FINISHED) { snprintf(error_response, sizeof(error_response), "%s\n", ERR_NOT_FINISHED_GAME); goto rematch_cleanup; }
+    // Assicurati che lo stato del client sia PLAYING e quello della partita FINISHED
+    if (clients[client_idx].state != CLIENT_STATE_PLAYING || game->state != GAME_STATE_FINISHED) {
+        snprintf(error_response, sizeof(error_response), "%s\n", ERR_NOT_IN_FINISHED_OR_DRAW_GAME); // Errore più specifico
+         LOG("Rematch command from '%s' (fd %d) for game %d ignored: Client state %d, Game state %d.\n",
+             caller_name, caller_fd, current_game_id, clients[client_idx].state, game->state);
+        goto rematch_cleanup;
+    }
 
     p1_fd = game->player1_fd; p2_fd = game->player2_fd;
     p1_idx = find_client_index_unsafe(p1_fd); p2_idx = find_client_index_unsafe(p2_fd);
@@ -405,96 +491,204 @@ void process_rematch_command(int client_idx, const char* choice) {
     bool is_draw = (game->winner_fd == -1);
     bool is_caller_winner = (!is_draw && game->winner_fd == caller_fd);
 
-    if (!is_caller_p1 && !is_caller_p2) { // Caller non è P1 né P2 della partita finita
-        snprintf(error_response, sizeof(error_response), "%s\n", ERR_GENERIC); goto rematch_cleanup;
+    // Controlli validità (come prima)
+    if (!is_caller_p1 && !is_caller_p2) { // Dovrebbe essere impossibile se fd è corretto, ma sicurezza
+        snprintf(error_response, sizeof(error_response), "%s\n", ERR_DRAW_REMATCH_ONLY_PLAYER); // Errore più specifico
+        goto rematch_cleanup;
     }
-    if (!is_draw && !is_caller_winner) { // Chiamante è il perdente
-        snprintf(error_response, sizeof(error_response), "%s\n", ERR_NOT_THE_WINNER);
-        clients[client_idx].state = CLIENT_STATE_LOBBY; clients[client_idx].game_id = 0;
+    // L'offerta arriva solo a vincitore e in caso di pareggio
+    if (!is_draw && !is_caller_winner) { // Chiamante è il perdente, non dovrebbe ricevere l'offerta
+        snprintf(error_response, sizeof(error_response), "%s\n", ERR_NOT_THE_WINNER); // Perdente non decide
+         LOG("Rematch command from loser '%s' (fd %d) ignored for game %d.\n", caller_name, caller_fd, current_game_id);
+        clients[client_idx].state = CLIENT_STATE_LOBBY; // Manda comunque il perdente in lobby se prova a rispondere
+        clients[client_idx].game_id = 0;
         goto rematch_cleanup;
     }
 
-    // Reset flag su prima risposta a DRAW
-    if (is_draw && !game->player1_accepted_rematch && !game->player2_accepted_rematch) {
-        game->player1_accepted_rematch = false; game->player2_accepted_rematch = false;
-    }
-
-    // Trova l'avversario
+    // Trova l'avversario (come prima)
     opponent_fd = find_opponent_fd(game, caller_fd);
-    opponent_idx = find_client_index_unsafe(opponent_fd);
+    opponent_idx = find_client_index_unsafe(opponent_fd); // Può essere -1 se disconnesso
 
+    // Inizializza/Controlla flag rematch su prima risposta a DRAW
+    // Se è la prima risposta al pareggio in assoluto, entrambi i flag dovrebbero essere PENDING
+    // Questa logica serve per evitare che stati vecchi interferiscano
+     if (is_draw) {
+         if (game->player1_accepted_rematch == REMATCH_CHOICE_PENDING && game->player2_accepted_rematch == REMATCH_CHOICE_PENDING) {
+             LOG("First rematch choice for DRAW game %d received from %s\n", game->id, caller_name);
+         }
+     }
+
+
+    // *** LOGICA DECISIONE MODIFICATA ***
     if (strcmp(choice, CMD_REMATCH_YES) == 0) {
         if (is_draw) {
-            LOG("Rematch DRAW YES from %s (fd %d)\n", caller_name, caller_fd);
-            if (is_caller_p1) game->player1_accepted_rematch = true;
-            else game->player2_accepted_rematch = true;
+            LOG("Rematch DRAW YES from %s (fd %d) for game %d\n", caller_name, caller_fd, game->id);
+            RematchChoice opponent_choice;
+            if (is_caller_p1) {
+                game->player1_accepted_rematch = REMATCH_CHOICE_YES;
+                opponent_choice = game->player2_accepted_rematch;
+            } else { // is_caller_p2
+                game->player2_accepted_rematch = REMATCH_CHOICE_YES;
+                opponent_choice = game->player1_accepted_rematch;
+            }
 
-            if (game->player1_accepted_rematch && game->player2_accepted_rematch) {
-                LOG("Rematch DRAW ACCEPTED by both!\n");
+            if (opponent_choice == REMATCH_CHOICE_YES) {
+                // Entrambi YES -> Riavvia partita Draw
+                LOG("Rematch DRAW ACCEPTED by both in game %d!\n", game->id);
                 game->state = GAME_STATE_IN_PROGRESS; init_board(game->board);
-                game->current_turn_fd = p1_fd; game->winner_fd = -1;
-                game->player1_accepted_rematch = false; game->player2_accepted_rematch = false;
-                if(p1_idx != -1 && clients[p1_idx].active) clients[p1_idx].state = CLIENT_STATE_PLAYING;
-                if(p2_idx != -1 && clients[p2_idx].active) clients[p2_idx].state = CLIENT_STATE_PLAYING;
-                snprintf(notify_p1_start, sizeof(notify_p1_start), NOTIFY_GAME_START_FMT, game->id, 'X', game->player2_name[0]?game->player2_name:"?");
-                snprintf(notify_p2_start, sizeof(notify_p2_start), NOTIFY_GAME_START_FMT, game->id, 'O', game->player1_name[0]?game->player1_name:"?");
-                restart_draw_game = true;
-            } else {
-                // Aspetta l'altro, nessuna risposta immediata
+                // Determina chi inizia (potrebbe alternare o essere sempre P1)
+                // Per semplicità, facciamo iniziare sempre P1 (chi ha creato originariamente)
+                game->current_turn_fd = game->player1_fd >= 0 ? game->player1_fd : game->player2_fd; // Fallback a P2 se P1 si fosse disconnesso nel frattempo (improbabile)
+                game->winner_fd = -1;
+                game->player1_accepted_rematch = REMATCH_CHOICE_PENDING; // Reset per prossimo game over
+                game->player2_accepted_rematch = REMATCH_CHOICE_PENDING; // Reset per prossimo game over
+                if(p1_idx != -1 && clients[p1_idx].active) clients[p1_idx].state = CLIENT_STATE_PLAYING; // Rimangono in PLAYING
+                if(p2_idx != -1 && clients[p2_idx].active) clients[p2_idx].state = CLIENT_STATE_PLAYING; // Rimangono in PLAYING
+                // Prepara notifiche START
+                snprintf(notify_p1_start, sizeof(notify_p1_start), NOTIFY_GAME_START_FMT, game->id, 'X', (game->player2_name[0] ? game->player2_name : "?"));
+                snprintf(notify_p2_start, sizeof(notify_p2_start), NOTIFY_GAME_START_FMT, game->id, 'O', (game->player1_name[0] ? game->player1_name : "?"));
+                restart_draw_game = true; // Invierà notifiche START dopo unlock
+                // Nessuna risposta diretta a chi ha inviato l'ultimo YES, riceverà GAME_START
+            } else if (opponent_choice == REMATCH_CHOICE_NO) {
+                // Tu (caller) dici YES, ma l'avversario ha GIA' detto NO
+                LOG("Rematch DRAW failed for game %d: %s said YES, but opponent already declined.\n", game->id, caller_name);
+                clients[client_idx].state = CLIENT_STATE_LOBBY; clients[client_idx].game_id = 0;
+                snprintf(response_caller, sizeof(response_caller), "%s", RESP_REMATCH_DECLINED); // Tu ricevi Declined perché l'altro ha detto NO
+                // L'avversario è già stato messo in lobby (presumibilmente) quando ha detto NO
+                send_fail_response_to_caller_due_to_opponent_no = true; // Manda RESP_REMATCH_DECLINED al chiamante dopo unlock
+                reset_game_on_exit = true; // La partita finisce, resetta lo slot
+            } else { // opponent_choice == REMATCH_CHOICE_PENDING
+                // Tu (caller) dici YES, avversario non ha ancora scelto. Aspetta.
+                LOG("Rematch DRAW: %s said YES for game %d. Waiting for opponent's choice.\n", caller_name, game->id);
+                // Nessuna risposta immediata inviata al chiamante che ha detto YES. Il client deve attendere.
             }
+
         } else { // Vincitore dice YES
-            LOG("Rematch WINNER YES from %s (fd %d)\n", caller_name, caller_fd);
-            game->state = GAME_STATE_WAITING; game->player1_fd = caller_fd;
-            strncpy(game->player1_name, caller_name, MAX_NAME_LEN-1); game->player1_name[MAX_NAME_LEN-1]='\0';
-            game->player2_fd = -1; game->player2_name[0] = '\0'; init_board(game->board);
+            LOG("Rematch WINNER YES from %s (fd %d) for game %d\n", caller_name, caller_fd, game->id);
+            // Riconfigura la partita esistente per aspettare un nuovo avversario
+            game->state = GAME_STATE_WAITING;
+            // Il vincitore rimane P1
+            game->player1_fd = caller_fd;
+            // Rimuovi il vecchio P2
+            game->player2_fd = -1; game->player2_name[0] = '\0';
+            init_board(game->board);
             game->current_turn_fd = -1; game->winner_fd = -1;
-            game->player1_accepted_rematch = false; game->player2_accepted_rematch = false;
-            clients[client_idx].state = CLIENT_STATE_WAITING;
-            if(opponent_idx != -1 && clients[opponent_idx].active) {
+            game->player1_accepted_rematch = REMATCH_CHOICE_PENDING; // Reset flags
+            game->player2_accepted_rematch = REMATCH_CHOICE_PENDING; // Reset flags
+
+            clients[client_idx].state = CLIENT_STATE_WAITING; // Vincitore ora è in attesa
+
+            if(opponent_idx != -1 && clients[opponent_idx].active && clients[opponent_idx].fd == opponent_fd) { // Controlla se avversario (perdente) è ancora attivo e valido
                 clients[opponent_idx].state = CLIENT_STATE_LOBBY; clients[opponent_idx].game_id = 0;
-                snprintf(notify_opponent, sizeof(notify_opponent), "%s", NOTIFY_OPPONENT_ACCEPTED_REMATCH);
-                LOG("Moving loser %s to LOBBY.\n", clients[opponent_idx].name);
+                // Invia notifica al perdente CHE VA IN LOBBY perché il vincitore rigiocherà
+                snprintf(notify_opponent_on_fail, sizeof(notify_opponent_on_fail), "%s", NOTIFY_OPPONENT_ACCEPTED_REMATCH);
+                LOG("Moving loser '%s' (fd %d) to LOBBY as winner accepted rematch for game %d.\n", clients[opponent_idx].name, opponent_fd, game->id);
+            } else {
+                LOG("Loser (opponent_fd %d) already inactive or invalid for game %d when winner accepted rematch.\n", opponent_fd, game->id);
             }
+            // Conferma al vincitore che ora è host
             snprintf(response_caller, sizeof(response_caller), RESP_REMATCH_ACCEPTED_FMT, game->id);
-            send_responses = true;
+            send_direct_response_to_caller = true; // Manda RESP_REMATCH_ACCEPTED e NOTIFY_OPPONENT_ACCEPTED_REMATCH dopo unlock
+            // Non resettare lo slot qui, il gioco continua in stato WAITING
         }
+
     } else if (strcmp(choice, CMD_REMATCH_NO) == 0) {
-        LOG("Rematch NO from %s (fd %d)\n", caller_name, caller_fd);
-        // Chiunque dica NO, manda entrambi in lobby
-        clients[client_idx].state = CLIENT_STATE_LOBBY; clients[client_idx].game_id = 0;
+        LOG("Rematch NO from %s (fd %d) for game %d\n", caller_name, caller_fd, game->id);
+
+        // Chiunque dica NO va subito in Lobby e riceve RESP_REMATCH_DECLINED
+        clients[client_idx].state = CLIENT_STATE_LOBBY;
+        clients[client_idx].game_id = 0;
         snprintf(response_caller, sizeof(response_caller), "%s", RESP_REMATCH_DECLINED);
-        if(opponent_idx != -1 && clients[opponent_idx].active){
-            clients[opponent_idx].state = CLIENT_STATE_LOBBY; clients[opponent_idx].game_id = 0;
-            snprintf(notify_opponent, sizeof(notify_opponent), "%s", NOTIFY_OPPONENT_DECLINED);
-            LOG("Moving opponent %s to LOBBY.\n", clients[opponent_idx].name);
+        send_direct_response_to_caller = true; // Flag per inviare questa risposta al chiamante
+
+        if (is_draw) {
+            LOG("Handling DRAW NO from %s for game %d\n", caller_name, game->id);
+            RematchChoice opponent_choice;
+            if (is_caller_p1) {
+                game->player1_accepted_rematch = REMATCH_CHOICE_NO;
+                 opponent_choice = game->player2_accepted_rematch; // *** CORRETTO TYPO QUI ***
+            } else { // is_caller_p2
+                game->player2_accepted_rematch = REMATCH_CHOICE_NO;
+                opponent_choice = game->player1_accepted_rematch;
+            }
+
+            // Controlla se l'avversario aveva già deciso
+            if (opponent_choice == REMATCH_CHOICE_PENDING) {
+                 // Avversario non ha ancora scelto.
+                 LOG("Game %d: %s said NO (draw). Opponent PENDING. Opponent will be notified upon their choice.\n", game->id, caller_name);
+                 // Non mandare nulla all'avversario ora. Non resettare ancora lo slot.
+            } else { // Opponent has already chosen (YES or NO, doesn't matter because caller said NO)
+                 // La partita finisce definitivamente. Metti l'avversario in LOBBY e notificalo.
+                 LOG("Game %d: %s said NO (draw). Opponent had already chosen (%d). Notifying opponent and resetting slot.\n", game->id, caller_name, opponent_choice);
+                 if (opponent_idx != -1 && clients[opponent_idx].active && clients[opponent_idx].fd == opponent_fd) {
+                     clients[opponent_idx].state = CLIENT_STATE_LOBBY;
+                     clients[opponent_idx].game_id = 0;
+                     snprintf(notify_opponent_on_fail, sizeof(notify_opponent_on_fail), "%s", NOTIFY_OPPONENT_DECLINED); // Ora è sicuro notificarlo
+                     LOG("Moving opponent '%s' (fd %d) to LOBBY (draw-rematch declined by %s).\n", clients[opponent_idx].name, opponent_fd, caller_name);
+                 }
+                 reset_game_on_exit = true; // Reset slot, la partita è finita
+            }
+
+        } else { // Chiamante era il VINCITORE e dice NO
+            LOG("Handling WINNER NO from %s for game %d\n", caller_name, game->id);
+            // Metti il perdente (opponent) in Lobby e notificalo
+             if(opponent_idx != -1 && clients[opponent_idx].active && clients[opponent_idx].fd == opponent_fd){
+                clients[opponent_idx].state = CLIENT_STATE_LOBBY;
+                clients[opponent_idx].game_id = 0;
+                snprintf(notify_opponent_on_fail, sizeof(notify_opponent_on_fail), "%s", NOTIFY_OPPONENT_DECLINED); // Notifica il PERDENTE
+                LOG("Moving loser '%s' (fd %d) to LOBBY as winner declined rematch for game %d.\n", clients[opponent_idx].name, opponent_fd, game->id);
+            } else {
+                 LOG("Loser (opponent_fd %d) already inactive or invalid when winner declined rematch for game %d.\n", opponent_fd, game->id);
+            }
+            reset_game_on_exit = true; // La partita finisce qui, resetta lo slot
         }
-         // Se era pareggio, resetta anche i flag per sicurezza (anche se verranno ignorati)
-        if(is_draw){ game->player1_accepted_rematch = false; game->player2_accepted_rematch = false; }
-        send_responses = true;
-    } else {
+
+    } else { // Comando non valido
         snprintf(error_response, sizeof(error_response), "%s\n", ERR_INVALID_REMATCH_CHOICE);
     }
 
 rematch_cleanup:
+     // Se dobbiamo resettare lo slot, facciamolo ora, dentro il lock della game list
+     if (reset_game_on_exit && game_idx != -1) {
+          LOG("Resetting game slot %d due to rematch outcome (NO decision or YES vs NO).\n", game_idx);
+         reset_game_slot_to_empty_unsafe(game_idx);
+     }
     pthread_mutex_unlock(&game_list_mutex);
     pthread_mutex_unlock(&client_list_mutex);
 
-    // Invia messaggi fuori lock
+    // --- Invio messaggi FUORI DAI LOCK ---
     if (restart_draw_game) {
-        if(p1_fd > 0 && notify_p1_start[0]) send_to_client(p1_fd, notify_p1_start);
-        if(p2_fd > 0 && notify_p2_start[0]) send_to_client(p2_fd, notify_p2_start);
-        if(game_idx != -1) {
-             pthread_mutex_lock(&game_list_mutex); broadcast_game_state(game_idx); pthread_mutex_unlock(&game_list_mutex);
+        // Notifica inizio nuova partita a entrambi
+        if(p1_fd >= 0 && notify_p1_start[0]) send_to_client(p1_fd, notify_p1_start);
+        if(p2_fd >= 0 && notify_p2_start[0]) send_to_client(p2_fd, notify_p2_start);
+        // Invia board iniziale
+        if(game_idx != -1) { // game_idx dovrebbe essere ancora valido (non è stato resettato)
+             pthread_mutex_lock(&game_list_mutex); // Lock di nuovo solo per broadcast
+             // Assicurati che lo stato sia ancora corretto prima di inviare
+             // (Anche se dovrebbe esserlo, check di sicurezza)
+             if(find_game_index_unsafe(current_game_id) == game_idx && games[game_idx].state == GAME_STATE_IN_PROGRESS){
+                 broadcast_game_state(game_idx);
+             } else {
+                  LOG("WARN: Game %d state changed before broadcasting state after draw rematch start.\n", current_game_id);
+             }
+             pthread_mutex_unlock(&game_list_mutex);
         }
-    } else if (send_responses) {
-        if (caller_fd > 0 && response_caller[0]) send_to_client(caller_fd, response_caller);
-        if (opponent_fd > 0 && notify_opponent[0]) send_to_client(opponent_fd, notify_opponent);
-    } else if (caller_fd > 0 && error_response[0]) {
-        send_to_client(caller_fd, error_response);
+    } else if (send_fail_response_to_caller_due_to_opponent_no) {
+        // Usato quando caller dice YES a draw, ma opponent aveva detto NO
+        if (caller_fd >= 0 && response_caller[0]) send_to_client(caller_fd, response_caller);
+    } else if (send_direct_response_to_caller) {
+         // Usato per tutte le altre risposte dirette (YES del vincitore, qualsiasi NO, ecc.)
+         // Invia la risposta diretta al chiamante
+         if (caller_fd >= 0 && response_caller[0]) send_to_client(caller_fd, response_caller);
+         // Invia la notifica all'avversario, SE C'E' (impostata solo se necessario)
+         if (opponent_fd >= 0 && notify_opponent_on_fail[0]) send_to_client(opponent_fd, notify_opponent_on_fail);
+    } else if (error_response[0]) { // Se c'è stato un errore di validazione iniziale
+        if (caller_fd >= 0) send_to_client(caller_fd, error_response);
     }
+    // Nessun invio esplicito qui se Caller(Draw) dice YES e Opponent(Draw) è PENDING
 
 rematch_cleanup_nolock:
-    return; // Uscita senza mutex per client inattivo
+    return; // Uscita senza mutex se client era inattivo all'inizio
 }
 
 
