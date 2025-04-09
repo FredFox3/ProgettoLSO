@@ -47,6 +47,8 @@ typedef struct {
     int pending_joiner_fd;  // fd del giocatore in attesa di join (-1 se nessuno)
     char pending_joiner_name[MAX_NAME_LEN];
     int winner_fd;          // fd del vincitore (-1 se pareggio/non finito/nessuno), -2 se il vincitore si è disconnesso dopo la fine ma prima del rematch
+    bool player1_accepted_rematch; // Flag per rivincita dopo pareggio
+    bool player2_accepted_rematch; // Flag per rivincita dopo pareggio
 } GameInfo;
 
 typedef struct {

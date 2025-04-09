@@ -170,43 +170,32 @@ public class GameController implements NetworkService.ServerListener {
     }
 
     private void handleBoardUpdateInternal(String[] boardCells) {
-        // ... (logica aggiornamento board UI come prima) ...
         System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): handleBoardUpdateInternal processing board | Current myTurn="+myTurn + ", gameActive="+gameActive.get()+", waitingRematch="+gameFinishedWaitingRematch.get());
-        if (boardCells.length != 9) {
-            System.err.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): ERROR Invalid board length received: " + boardCells.length);
-            return;
-        }
+        if (boardCells.length != 9) { /*...*/ return; }
         int emptyCellsCount = 0;
         for (int i = 0; i < 3; i++) {
             for (int j = 0; j < 3; j++) {
-                if (buttons[i][j] == null) {
-                    System.err.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): ERROR Button at ["+i+"]["+j+"] is null!");
-                    continue;
-                }
+                if (buttons[i][j] == null) { /*...*/ continue; }
                 String symbol = boardCells[i * 3 + j];
                 boolean isEmpty = "-".equals(symbol);
-
                 buttons[i][j].setText(isEmpty ? " " : symbol);
+                // L'abilitazione/disabilitazione del *singolo bottone* dipende solo se è vuoto
                 buttons[i][j].setDisable(!isEmpty);
-
                 if(isEmpty) emptyCellsCount++;
             }
         }
         System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Board UI updated. Empty cells: " + emptyCellsCount);
 
-        // Abilita/Disabilita griglia SOLO se la partita è ancora attiva
-        if (gameActive.get()) { // Modifica: controlla gameActive qui
-            if (!myTurn) {
-                gridPane.setDisable(true);
-                System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): handleBoardUpdateInternal - Grid disabled (not my turn).");
-            } else {
-                gridPane.setDisable(false);
-                System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): handleBoardUpdateInternal - Grid enabled (my turn).");
-            }
-        } else {
-            // Se partita non attiva (finita o in attesa rematch), la griglia rimane disabilitata
+        // Gestione stato GRIGLIA (non dei singoli bottoni)
+        // La griglia va disabilitata se il gioco non è attivo OPPURE se è attivo ma non è il mio turno.
+        // L'abilitazione viene fatta SOLO da handleYourTurnInternal.
+        if (!gameActive.get() || (gameActive.get() && !myTurn) ) {
             gridPane.setDisable(true);
-            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): handleBoardUpdateInternal - Grid remains disabled (game not active/waiting rematch).");
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): handleBoardUpdateInternal - Grid disabled (game not active OR not my turn).");
+        } else {
+            // Se il gioco è attivo ED è il mio turno, NON fare nulla qui,
+            // lascia che handleYourTurnInternal abiliti la griglia.
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): handleBoardUpdateInternal - Grid state remains (my turn, enabled by handleYourTurnInternal).");
         }
         System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): handleBoardUpdateInternal END | Grid disabled: " + gridPane.isDisabled());
     }
@@ -226,32 +215,27 @@ public class GameController implements NetworkService.ServerListener {
     }
 
     private void handleYourTurnInternal() {
-        // ... (logica aggiornamento UI come prima) ...
         System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): handleYourTurnInternal processing | Current myTurn state = "+myTurn);
-        if (!gameActive.get()) {
-            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): handleYourTurnInternal - Game not active, ignoring.");
-            return;
-        }
+        if (!gameActive.get()) { /*...*/ return; }
         myTurn = true;
         TextTurno.setText("Il tuo turno! (" + mySymbol + ")");
         System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Enabling GridPane and empty buttons for your turn.");
+
+        // Abilita la griglia PRINCIPALE
         gridPane.setDisable(false);
+
+        // Abilita/Disabilita i SINGOLI bottoni
         int enabledCount = 0;
         for(int r=0; r<3; r++) {
             for (int c=0; c<3; c++) {
-                if (buttons[r][c] == null) {
-                    System.err.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): ERROR Button at ["+r+"]["+c+"] is null!");
-                    continue;
-                }
+                if (buttons[r][c] == null) { /*...*/ continue; }
                 boolean isEmpty = buttons[r][c].getText().trim().isEmpty();
-                buttons[r][c].setDisable(!isEmpty);
-                if(isEmpty) {
-                    enabledCount++;
-                }
+                buttons[r][c].setDisable(!isEmpty); // Abilita solo se vuoto
+                if(isEmpty) enabledCount++;
             }
         }
         System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Finished enabling buttons. Enabled count: " + enabledCount);
-        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): handleYourTurnInternal END | Grid disabled: " + gridPane.isDisabled());
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): handleYourTurnInternal END | Grid disabled: " + gridPane.isDisabled()); // Dovrebbe essere false
     }
 
     private void handleCellClick(int row, int col) {
@@ -398,19 +382,23 @@ public class GameController implements NetworkService.ServerListener {
     // --- NUOVO: onRematchAccepted ---
     @Override
     public void onRematchAccepted(int receivedGameId) {
-        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): *** onRematchAccepted received for game "+receivedGameId+" ***");
-        if (!gameFinishedWaitingRematch.getAndSet(false)) { // Prendi e resetta il flag
-            System.err.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Received RematchAccepted but not in waiting state. Returning home anyway.");
-            // Non mostrare l'alert se lo stato non era corretto
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): *** onRematchAccepted received for game "+receivedGameId+" *** (Only expected for winner rematch)");
+
+        // Questa callback ora viene chiamata SOLO se eri il vincitore e hai accettato,
+        // risultando nello stato WAITING sul server. Se eri in pareggio e hai accettato,
+        // riceverai onGameStart (se l'altro accetta) o onRematchDeclined (se l'altro rifiuta).
+        if (!gameFinishedWaitingRematch.getAndSet(false)) { // Verifica stato precedente
+            System.err.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): WARNING - Received RematchAccepted but wasn't in waiting state. Likely win scenario OK. Returning home.");
+            // Non è un errore grave se arriva dopo una vittoria, procedi a tornare alla home
         } else {
             Platform.runLater(() -> {
-                showInfo("Rivincita Accettata", "Ok, sei in attesa di un nuovo avversario per la partita " + receivedGameId + ".\nTorni alla lobby.");
+                showInfo("Rematch Accepted (Waiting)", "Ok, sei in attesa di un nuovo avversario per la partita " + receivedGameId + ".\nTorni alla lobby.");
             });
         }
 
-        // Torna alla home in ogni caso se riceviamo questa conferma
+        // Torna alla home
         if (returnToHomeCallback != null) {
-            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Returning home after RematchAccepted.");
+            System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Returning home after RematchAccepted (winner becomes host).");
             Platform.runLater(() -> returnToHomeCallback.accept("Rematch accepted, waiting"));
         } else {
             System.err.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): returnToHomeCallback is null after RematchAccepted!");
@@ -634,7 +622,57 @@ public class GameController implements NetworkService.ServerListener {
     @Override public void onJoinAccepted(int gameId, char symbol, String opponentName) { System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received JoinAccepted UNEXPECTEDLY for game "+gameId+" !!!"); }
     @Override public void onJoinRejected(int gameId, String creatorName) { System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received JoinRejected UNEXPECTEDLY for game "+gameId+" !!!"); }
     @Override public void onActionConfirmed(String message) { System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received ActionConfirmed UNEXPECTEDLY !!! Message: "+message); }
-    @Override public void onGameStart(int gameId, char symbol, String opponentName) { System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received GameStart UNEXPECTEDLY or for wrong/inactive game ID="+gameId+" !!!");}
+    @Override
+    public void onGameStart(int recGameId, char recSymbol, String recOpponentName) {
+        System.out.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): *** onGameStart received *** | Target ID="+recGameId+", My ID="+this.gameId+", gameActive="+gameActive.get()+", waitingRematch="+gameFinishedWaitingRematch.get());
+
+        if(this.gameId != recGameId){
+            System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): ERROR Received GameStart for wrong game ID!");
+            // Potrebbe essere un vecchio messaggio, ignoriamo? O torniamo alla home?
+            return;
+        }
+
+        if (gameFinishedWaitingRematch.get()) {
+            // --- CASO DRAW REMATCH ACCEPTED BY BOTH ---
+            System.out.println(getCurrentTimestamp() + " - GC (" + this.hashCode() + "): Received GameStart while waiting after draw -> REMATCH STARTING!");
+            gameFinishedWaitingRematch.set(false); // Non siamo più in attesa della decisione
+            gameActive.set(true); // La nuova partita è attiva
+            // Aggiorna UI per nuova partita (ma mantieni simbolo/avversario?)
+            // I simboli potrebbero invertirsi? Il server attuale non lo fa (P1 X, P2 O).
+            this.mySymbol = recSymbol; // Aggiorna per sicurezza
+            this.opponentName = recOpponentName; // Aggiorna per sicurezza
+
+            Platform.runLater(() -> {
+                TextTurno.setText("Rematch! Partita vs " + this.opponentName + " (Sei " + this.mySymbol + "). In attesa...");
+                // Resetta la board UI
+                for (int r = 0; r < 3; r++) {
+                    for (int c = 0; c < 3; c++) {
+                        if(buttons[r][c] != null) {
+                            buttons[r][c].setText(" ");
+                            // Non impostare lo stato disabilitato qui, lo gestiranno
+                            // handleBoardUpdateInternal e handleYourTurnInternal
+                            // buttons[r][c].setDisable(true); // RIMUOVERE/COMMENTARE
+                        }
+                    }
+                }
+                // Non disabilitare la griglia qui, ci penserà il primo handleBoardUpdateInternal
+                // gridPane.setDisable(true); // RIMUOVERE/COMMENTARE
+                if (buttonLeave != null) buttonLeave.setDisable(false);
+                System.out.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): UI text reset for draw rematch (grid/button state handled by subsequent events).");
+            });
+
+        } else if (isSetupComplete.get() && gameActive.get()){
+            System.out.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): Ignoring redundant GameStart signal for active game.");
+        } else if (!isSetupComplete.get()){
+            System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received GameStart BEFORE setup complete ??? !!!");
+            // Logica di cache / setup dovrebbe gestire questo
+        } else {
+            System.err.println(getCurrentTimestamp()+" - GC ("+this.hashCode()+"): !!! Received GameStart in unexpected state (setup complete, but not active and not waiting rematch?) !!!");
+            // Potrebbe succedere se l'utente ha premuto leave? O errore di stato?
+            // Torniamo alla home per sicurezza.
+            if(returnToHomeCallback != null) Platform.runLater(() -> returnToHomeCallback.accept("State Error"));
+        }
+    }
     @Override public void onMessageReceived(String rawMessage) { System.err.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): *** onMessageReceived (Unhandled) *** Message: " + rawMessage); }
 
 
