@@ -35,45 +35,52 @@ public class NetworkService {
         return LocalDateTime.now().format(TIMESTAMP_FORMATTER);
     }
 
-    // Interfaccia ServerListener (invariata dall'ultimo codice)
+    // Interfaccia ServerListener (con metodi rematch aggiunti nel passo precedente)
     public interface ServerListener {
         void onConnected();
         void onDisconnected(String reason);
         void onMessageReceived(String rawMessage);
+        void onError(String message);
         void onNameRequested();
         void onNameAccepted();
         void onGamesList(List<GameInfo> games);
+        void onActionConfirmed(String message);
         void onGameCreated(int gameId);
+        void onJoinRequestSent(int gameId);
+        void onJoinRequestReceived(String requesterName);
+        void onJoinAccepted(int gameId, char symbol, String opponentName);
+        void onJoinRejected(int gameId, String creatorName);
         void onGameStart(int gameId, char symbol, String opponentName);
         void onBoardUpdate(String[] board);
         void onYourTurn();
         void onGameOver(String result);
         void onOpponentLeft();
-        void onError(String message);
-        void onJoinRequestSent(int gameId);
-        void onJoinRequestReceived(String requesterName);
-        void onJoinAccepted(int gameId, char symbol, String opponentName);
-        void onJoinRejected(int gameId, String creatorName);
-        void onActionConfirmed(String message);
+        // Funzionalità Rivincita
+        void onRematchOffer();
+        void onRematchAccepted(int gameId);
+        void onRematchDeclined();
+        void onOpponentRematchDecision(boolean opponentAccepted);
     }
 
-    // GameInfo con stato aggiunto
+    // GameInfo (invariato)
     public static class GameInfo {
         public final int id;
         public final String creatorName;
-        public final String state; // Stato aggiunto
+        public final String state;
 
-        public GameInfo(int id, String creatorName, String state) { // Costruttore aggiornato
+        public GameInfo(int id, String creatorName, String state) {
             this.id = id;
             this.creatorName = creatorName;
             this.state = state;
         }
-        @Override public String toString() { // toString aggiornato (opzionale)
+        @Override public String toString() {
             return "Partita " + id + " (da " + creatorName + ") - " + state;
         }
     }
 
     // Metodi setServerListener, connect, handleDisconnection (invariati)
+    // ...
+
     public void setServerListener(ServerListener newListener) {
         String oldListenerName = this.currentListenerName;
         String newListenerName = (newListener != null) ? newListener.getClass().getSimpleName() + " ("+newListener.hashCode()+")" : "null";
@@ -182,7 +189,8 @@ public class NetworkService {
         });
     }
 
-    // parseServerMessage con modifica per GAMES_LIST
+
+    // --- parseServerMessage AGGIORNATO ---
     private void parseServerMessage(String message, ServerListener currentListener) {
         if (message == null || message.trim().isEmpty()) return;
         if(currentListener == null){
@@ -195,33 +203,31 @@ public class NetworkService {
                 currentListener.onNameRequested();
             } else if (message.startsWith("RESP:NAME_OK")) {
                 currentListener.onNameAccepted();
-            } else if (message.startsWith("RESP:GAMES_LIST;")) { // Modifica qui
+            } else if (message.startsWith("RESP:GAMES_LIST;")) {
+                // ... (logica GAMES_LIST invariata) ...
                 List<GameInfo> games = new ArrayList<>();
                 String content = message.substring("RESP:GAMES_LIST;".length());
                 if (!content.isEmpty()) {
                     String[] gameEntries = content.split("\\|");
                     for (String entry : gameEntries) {
-                        String[] parts = entry.split(","); // Formato atteso: ID,NomeCreatore,Stato
-                        if (parts.length >= 3) { // Verifica che ci siano almeno 3 parti
+                        String[] parts = entry.split(",");
+                        if (parts.length >= 3) {
                             try {
                                 int id = Integer.parseInt(parts[0]);
-                                String name = parts[1]; // Nome
-                                String state = parts[2]; // Stato
-                                games.add(new GameInfo(id, name, state)); // Usa il nuovo costruttore
-                            } catch (NumberFormatException e) {
-                                System.err.println(getCurrentTimestamp() + " - Error parsing game ID in list: " + entry);
-                            } catch (IndexOutOfBoundsException e) {
-                                System.err.println(getCurrentTimestamp() + " - Error parsing game parts in list (Index): " + entry);
+                                String name = parts[1];
+                                String state = parts[2];
+                                games.add(new GameInfo(id, name, state));
+                            } catch (NumberFormatException | IndexOutOfBoundsException e) {
+                                System.err.println(getCurrentTimestamp() + " - Error parsing game entry in list: " + entry);
                             }
                         } else {
-                            System.err.println(getCurrentTimestamp() + " - Malformed game entry in list (parts < 3): " + entry);
+                            System.err.println(getCurrentTimestamp() + " - Malformed game entry in list: " + entry);
                         }
                     }
                 }
-                currentListener.onGamesList(games); // Invia la lista aggiornata
-            }
-            // ... resto di parseServerMessage (invariato dall'ultimo codice) ...
-            else if (message.startsWith("RESP:CREATED ")) {
+                currentListener.onGamesList(games);
+            } else if (message.startsWith("RESP:CREATED ")) {
+                // ... (logica CREATED invariata) ...
                 try {
                     int gameId = Integer.parseInt(message.substring("RESP:CREATED ".length()).trim());
                     currentListener.onGameCreated(gameId);
@@ -230,6 +236,7 @@ public class NetworkService {
                     currentListener.onError("Invalid game ID format from server (CREATED)");
                 }
             } else if (message.startsWith("RESP:REQUEST_SENT ")) {
+                // ... (logica REQUEST_SENT invariata) ...
                 try {
                     int gameId = Integer.parseInt(message.substring("RESP:REQUEST_SENT ".length()).trim());
                     currentListener.onJoinRequestSent(gameId);
@@ -238,6 +245,7 @@ public class NetworkService {
                     currentListener.onError("Invalid format from server (REQUEST_SENT)");
                 }
             } else if (message.startsWith("NOTIFY:JOIN_REQUEST ")) {
+                // ... (logica JOIN_REQUEST invariata) ...
                 String requesterName = message.substring("NOTIFY:JOIN_REQUEST ".length()).trim();
                 if (!requesterName.isEmpty()) {
                     currentListener.onJoinRequestReceived(requesterName);
@@ -246,6 +254,7 @@ public class NetworkService {
                     currentListener.onError("Malformed JOIN_REQUEST message from server (empty name)");
                 }
             } else if (message.startsWith("RESP:JOIN_ACCEPTED ")) {
+                // ... (logica JOIN_ACCEPTED invariata) ...
                 String[] parts = message.substring("RESP:JOIN_ACCEPTED ".length()).split(" ");
                 if (parts.length >= 3) {
                     try {
@@ -262,6 +271,7 @@ public class NetworkService {
                     currentListener.onError("Malformed JOIN_ACCEPTED message from server");
                 }
             } else if (message.startsWith("RESP:JOIN_REJECTED ")) {
+                // ... (logica JOIN_REJECTED invariata) ...
                 String[] parts = message.substring("RESP:JOIN_REJECTED ".length()).split(" ");
                 if (parts.length >= 2) {
                     try {
@@ -277,10 +287,11 @@ public class NetworkService {
                     currentListener.onError("Malformed JOIN_REJECTED message from server");
                 }
             } else if (message.startsWith("RESP:REJECT_OK ")) {
+                // ... (logica REJECT_OK invariata) ...
                 String rejectedName = message.substring("RESP:REJECT_OK ".length()).trim();
                 currentListener.onActionConfirmed("Rejected request from " + rejectedName);
-            }
-            else if (message.startsWith("NOTIFY:GAME_START ")) {
+            } else if (message.startsWith("NOTIFY:GAME_START ")) {
+                // ... (logica GAME_START invariata) ...
                 String[] parts = message.substring("NOTIFY:GAME_START ".length()).split(" ");
                 if (parts.length >= 3) {
                     try {
@@ -297,6 +308,7 @@ public class NetworkService {
                     currentListener.onError("Malformed GAME_START message from server");
                 }
             } else if (message.startsWith("NOTIFY:BOARD ")) {
+                // ... (logica BOARD invariata) ...
                 String boardData = message.substring("NOTIFY:BOARD ".length());
                 String[] boardCells = boardData.split(" ");
                 if(boardCells.length == 9) {
@@ -312,11 +324,37 @@ public class NetworkService {
                 currentListener.onGameOver(result);
             } else if (message.startsWith("NOTIFY:OPPONENT_LEFT")) {
                 currentListener.onOpponentLeft();
+
+                // --- NUOVI MESSAGGI REMATCH ---
+            } else if (message.startsWith("CMD:REMATCH_OFFER")) {
+                currentListener.onRematchOffer();
+            } else if (message.startsWith("RESP:REMATCH_ACCEPTED ")) {
+                String content = message.substring("RESP:REMATCH_ACCEPTED ".length());
+                String[] parts = content.split(" "); // "123 Waiting for new opponent."
+                if(parts.length > 0) {
+                    try {
+                        int gameId = Integer.parseInt(parts[0]);
+                        currentListener.onRematchAccepted(gameId);
+                    } catch (NumberFormatException e) {
+                        System.err.println(getCurrentTimestamp() + " - Error parsing REMATCH_ACCEPTED game ID: " + message);
+                        currentListener.onError("Invalid format from server (REMATCH_ACCEPTED ID)");
+                    }
+                } else {
+                    System.err.println(getCurrentTimestamp() + " - Malformed REMATCH_ACCEPTED message: " + message);
+                    currentListener.onError("Malformed REMATCH_ACCEPTED message from server");
+                }
+            } else if (message.startsWith("RESP:REMATCH_DECLINED")) {
+                currentListener.onRematchDeclined();
+            } else if (message.startsWith("NOTIFY:OPPONENT_ACCEPTED_REMATCH")) {
+                currentListener.onOpponentRematchDecision(true); // Il tuo avversario ha accettato
+            } else if (message.startsWith("NOTIFY:OPPONENT_DECLINED")) {
+                currentListener.onOpponentRematchDecision(false); // Il tuo avversario ha rifiutato
+                // --- FINE NUOVI MESSAGGI REMATCH ---
+
             } else if (message.startsWith("NOTIFY:SERVER_SHUTDOWN")) {
                 System.out.println(getCurrentTimestamp()+" - NetworkService: Handling Server Shutdown message.");
                 handleDisconnection("Server is shutting down");
-                closeResources();
-
+                closeResources(); // Chiudi le risorse subito in caso di shutdown
             } else if (message.startsWith("ERROR:")) {
                 String errorMsg = message.substring("ERROR:".length()).trim();
                 currentListener.onError(errorMsg);
@@ -337,7 +375,9 @@ public class NetworkService {
     }
 
 
-    // Metodi sendMessage, sendX commands, disconnect, closeResources, shutdownExecutor, isConnected, getCurrentListener, canAttemptConnect, cleanupExecutor (invariati)
+    // Metodo sendMessage (invariato)
+    // ...
+
     public void sendMessage(String message) {
         final String msgToSend = message;
         PrintWriter currentOut = this.out;
@@ -371,6 +411,8 @@ public class NetworkService {
         }
     }
 
+    // Metodi sendX commands (invariati, tranne l'aggiunta di sendRematchChoice)
+    // ...
     public void sendName(String name) { sendMessage("NAME " + name); }
     public void sendListRequest() { sendMessage("LIST"); }
     public void sendCreateGame() { sendMessage("CREATE"); }
@@ -380,6 +422,19 @@ public class NetworkService {
     public void sendMove(int row, int col) { sendMessage("MOVE " + row + " " + col); }
     public void sendQuit() { sendMessage("QUIT"); }
 
+    // --- NUOVO METODO per inviare la scelta della rivincita ---
+    /**
+     * Invia la scelta del giocatore riguardo alla rivincita.
+     * @param accept true se il giocatore accetta la rivincita, false altrimenti.
+     */
+    public void sendRematchChoice(boolean accept) {
+        sendMessage(accept ? "REMATCH YES" : "REMATCH NO");
+    }
+    // --- FINE NUOVO METODO ---
+
+
+    // Metodi disconnect, closeResources, shutdownExecutor, isConnected, getCurrentListener, canAttemptConnect, cleanupExecutor (invariati)
+    // ...
     public void disconnect() {
         System.out.println(getCurrentTimestamp() + " - NetworkService: disconnect() CALLED (Window Close/App Exit).");
         if (!running) {
@@ -461,4 +516,5 @@ public class NetworkService {
         shutdownExecutor();
         networkExecutor = null;
     }
-}
+
+} // Fine classe NetworkService
