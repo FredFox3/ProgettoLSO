@@ -1,10 +1,12 @@
 #include "game_logic.h"
 #include "utils.h" // Per LOG, send_to_client
+#include "protocol.h"
 #include <string.h>
 #include <stdio.h> // per snprintf
 
 // Definizioni costanti stringhe
-const char* NOTIFY_OPPONENT_LEFT = "NOTIFY:OPPONENT_LEFT\n";
+const char* NOTIFY_OPPONENT_LEFT = "NOTIFY:OPPONENT_LEFT Back to lobby.\n"; // Aggiunto "Back to lobby." per chiarezza
+const char* NOTIFY_WINNER_LEFT_AFTER_GAME = "NOTIFY:WINNER_LEFT Back to lobby.\n"; // Nuovo: Per notificare il perdente se il vincitore esce dopo la fine
 const char* NOTIFY_GAMEOVER_WIN = "NOTIFY:GAMEOVER WIN\n";
 const char* NOTIFY_GAMEOVER_LOSE = "NOTIFY:GAMEOVER LOSE\n";
 const char* NOTIFY_GAMEOVER_DRAW = "NOTIFY:GAMEOVER DRAW\n";
@@ -113,50 +115,46 @@ int find_opponent_fd(const GameInfo* game, int player_fd) {
 void reset_game_slot_to_empty_unsafe(int game_idx) {
     if (game_idx < 0 || game_idx >= MAX_GAMES) return;
 
-    // Logga prima di resettare se l'ID era valido
     if (games[game_idx].id > 0) {
         LOG("Resetting game slot index %d (Previous Game ID: %d) to EMPTY\n", game_idx, games[game_idx].id);
     } else {
-         LOG("Resetting unused game slot index %d to EMPTY\n", game_idx);
+         // Non loggare se era già vuoto (succede all'avvio)
+         // LOG("Resetting unused game slot index %d to EMPTY\n", game_idx);
     }
 
-    // Usa memset per azzerare gran parte della struttura in modo efficiente
-    memset(&games[game_idx], 0, sizeof(GameInfo));
+    memset(&games[game_idx], 0, sizeof(GameInfo)); // Azzeramento iniziale
 
     // Reimposta valori specifici per chiarezza e sicurezza
-    games[game_idx].id = 0; // ID 0 indica slot vuoto
+    games[game_idx].id = 0;
     games[game_idx].state = GAME_STATE_EMPTY;
     games[game_idx].player1_fd = -1;
     games[game_idx].player2_fd = -1;
     games[game_idx].current_turn_fd = -1;
     games[game_idx].pending_joiner_fd = -1;
-    // init_board è implicitamente fatto da memset, ma chiamarlo è sicuro
-    init_board(games[game_idx].board);
+    games[game_idx].winner_fd = -1; // *** INIZIALIZZA winner_fd ***
+    // init_board è implicito con memset a 0 dato che CELL_EMPTY è 0
+    // init_board(games[game_idx].board);
 }
 
 
 bool handle_player_leaving_game(int game_idx, int leaving_client_fd, const char* leaving_client_name) {
     // Assumes client_list_mutex and game_list_mutex are LOCKED by caller
 
-    // Controlli iniziali su indici e fd
     if (game_idx < 0 || game_idx >= MAX_GAMES || leaving_client_fd < 0) {
-        LOG("Error: Invalid arguments to handle_player_leaving_game (game_idx=%d, fd=%d)\n",
-            game_idx, leaving_client_fd);
-        return false; // Indice o fd non valido
+        LOG("Error: Invalid arguments to handle_player_leaving_game (game_idx=%d, fd=%d)\n", game_idx, leaving_client_fd);
+        return false;
     }
 
     GameInfo* game = &games[game_idx];
-    // *** CORREZIONE: Leggi lo stato della partita all'inizio ***
-    GameState state_at_entry = game->state;
+    GameState state_at_entry = game->state; // Leggi stato partita all'inizio
 
-    // Se la partita è già vuota, non c'è nulla da fare
     if (state_at_entry == GAME_STATE_EMPTY) {
          LOG("handle_player_leaving_game called for an already EMPTY slot (idx %d). Ignoring.\n", game_idx);
          return false;
     }
 
-    char response[BUFFER_SIZE]; // Buffer per messaggi di notifica
-    bool game_reset_to_empty = false; // Flag per indicare se la partita viene annullata
+    char response[BUFFER_SIZE];
+    bool game_reset_to_empty = false;
 
     int opponent_fd = -1;
     int opponent_idx = -1;
@@ -164,106 +162,185 @@ bool handle_player_leaving_game(int game_idx, int leaving_client_fd, const char*
     bool was_player2 = (game->player2_fd == leaving_client_fd);
     bool was_pending = (game->pending_joiner_fd == leaving_client_fd);
 
-    // Log iniziale (usa lo stato letto all'inizio)
     LOG("Handling departure: Player '%s' (fd %d) from game %d (idx %d, state %d)\n",
         leaving_client_name ? leaving_client_name : "N/A",
         leaving_client_fd,
-        game->id, game_idx, state_at_entry); // Stampa lo stato all'entrata
+        game->id, game_idx, state_at_entry);
 
     // --- Logica basata sullo stato all'entrata ---
 
-    // Caso 1: Il giocatore che esce era un richiedente in attesa (pending joiner)
-    // Usa state_at_entry per la condizione
+    // Caso 1: Pending joiner
     if (was_pending && state_at_entry == GAME_STATE_WAITING) {
         LOG("Pending joiner '%s' left game %d. Clearing request.\n", game->pending_joiner_name, game->id);
-        // Azioni: Resetta solo la parte pending
         game->pending_joiner_fd = -1;
         game->pending_joiner_name[0] = '\0';
-        // Notifica il creatore che la richiesta è stata annullata
-        if (game->player1_fd >= 0) { // Controlla se il creatore è ancora valido
-             snprintf(response, sizeof(response), "NOTIFY:REQUEST_CANCELLED %s left\n",
+        if (game->player1_fd >= 0) {
+             // Usa la costante definita in protocol.h/c
+             snprintf(response, sizeof(response), NOTIFY_REQUEST_CANCELLED_FMT,
                       leaving_client_name ? leaving_client_name : "Player");
              send_to_client(game->player1_fd, response);
         }
-    }
-    // Caso 2: Il giocatore che esce era il creatore (P1) mentre la partita era in attesa (WAITING)
-    // Usa state_at_entry per la condizione
-    else if (was_player1 && state_at_entry == GAME_STATE_WAITING) {
-        LOG("Creator '%s' left game %d while WAITING. Cancelling game and resetting slot.\n", game->player1_name, game->id);
-        // Azioni: Notifica pending joiner (se c'è) e resetta l'intero slot
-        int pending_joiner_notify_fd = game->pending_joiner_fd; // Copia fd prima di resettare
-        char pending_joiner_name_copy[MAX_NAME_LEN];
-        strncpy(pending_joiner_name_copy, game->pending_joiner_name, MAX_NAME_LEN);
-        pending_joiner_name_copy[MAX_NAME_LEN-1] = '\0';
 
-        // Resetta lo slot della partita a EMPTY
-        reset_game_slot_to_empty_unsafe(game_idx);
-        game_reset_to_empty = true; // Segnala che lo slot è stato resettato
+    // Caso 2: Creatore (P1) lascia mentre WAITING
+    } else if (was_player1 && state_at_entry == GAME_STATE_WAITING) {
+         LOG("Creator '%s' left game %d while WAITING. Cancelling game and resetting slot.\n", game->player1_name, game->id);
+         int pending_joiner_notify_fd = game->pending_joiner_fd;
+         int saved_game_id = game->id; // Salva l'ID prima di resettare
 
-        // Notifica il richiedente pendente (se esisteva) DOPO aver resettato
-        if (pending_joiner_notify_fd >= 0) {
-             snprintf(response, sizeof(response), "ERROR:Game %d cancelled: creator '%s' left.\n", game->id, // Usa game->id salvato implicitamente da reset? No, l'id viene azzerato. Meglio usare un id salvato se serve. Ma qui l'id della partita annullata non è più rilevante per il joiner.
-                       leaving_client_name ? leaving_client_name : "Creator"); // Nome del creatore che è uscito
+         // Resetta slot a EMPTY
+         reset_game_slot_to_empty_unsafe(game_idx);
+         game_reset_to_empty = true;
+
+         if (pending_joiner_notify_fd >= 0) {
+             // Notifica il joiner che la partita è cancellata
+             snprintf(response, sizeof(response), "%sGame %d cancelled: creator '%s' left.\n", RESP_ERROR_PREFIX,
+                      saved_game_id, leaving_client_name ? leaving_client_name : "Creator");
              send_to_client(pending_joiner_notify_fd, response);
-             // Rimetti il richiedente nella lobby (assumendo che il suo thread si occuperà della sua disconnessione se necessario)
+
+             // Rimetti il joiner in lobby
              int joiner_idx = find_client_index_unsafe(pending_joiner_notify_fd);
-             if(joiner_idx != -1 && clients[joiner_idx].active) { // Check anche active
+             if(joiner_idx != -1 && clients[joiner_idx].active) {
                  clients[joiner_idx].state = CLIENT_STATE_LOBBY;
                  clients[joiner_idx].game_id = 0;
                  LOG("Pending joiner '%s' (fd %d) returned to LOBBY due to creator leaving.\n", clients[joiner_idx].name, pending_joiner_notify_fd);
              }
-        }
-    }
-    // Caso 3: Il giocatore (P1 o P2) esce mentre la partita è in corso (IN_PROGRESS)
-    // Usa state_at_entry per la condizione
-    else if ((was_player1 || was_player2) && state_at_entry == GAME_STATE_IN_PROGRESS) {
-        LOG("Player '%s' left game %d IN_PROGRESS. Opponent wins. Setting state to FINISHED.\n",
+         }
+
+    // Caso 3: Giocatore (P1 o P2) lascia mentre IN_PROGRESS
+    } else if ((was_player1 || was_player2) && state_at_entry == GAME_STATE_IN_PROGRESS) {
+        LOG("Player '%s' left game %d IN_PROGRESS. Opponent wins. Setting state to FINISHED. Moving winner to lobby.\n",
             leaving_client_name ? leaving_client_name : "Player", game->id);
 
         opponent_fd = find_opponent_fd(game, leaving_client_fd);
 
-        // Azioni: Imposta stato a FINISHED, notifica avversario
         game->state = GAME_STATE_FINISHED; // La partita finisce
-        game->current_turn_fd = -1; // Nessuno ha il turno
+        game->current_turn_fd = -1;
 
-        // Marca il giocatore che è uscito come invalido (-2)
+        // L'avversario è il vincitore forzato
+        game->winner_fd = opponent_fd;
+
+        // Marca chi è uscito
         if (was_player1) game->player1_fd = -2;
         else game->player2_fd = -2;
 
-        // Notifica l'avversario (se ancora valido) e rimettilo nella lobby
-        if (opponent_fd >= 0) { // Controlla se fd è valido (non -1 o -2)
-            send_to_client(opponent_fd, NOTIFY_OPPONENT_LEFT);
-            send_to_client(opponent_fd, NOTIFY_GAMEOVER_WIN); // L'avversario vince
+        // Notifica l'avversario e mettilo subito in lobby (non c'è rematch in questo caso)
+        if (opponent_fd >= 0) {
+            LOG("Notifying opponent fd %d they won game %d and moving to LOBBY.\n", opponent_fd, game->id);
+            send_to_client(opponent_fd, NOTIFY_OPPONENT_LEFT); // Notifica uscita
+            send_to_client(opponent_fd, NOTIFY_GAMEOVER_WIN);  // Notifica vittoria
+
+            // Metti subito l'avversario (vincitore) in lobby
             opponent_idx = find_client_index_unsafe(opponent_fd);
-            if (opponent_idx != -1 && clients[opponent_idx].active) { // Check active
-                 clients[opponent_idx].state = CLIENT_STATE_LOBBY;
-                 clients[opponent_idx].game_id = 0;
-                 LOG("Opponent '%s' (fd %d) moved to LOBBY due to player leaving.\n", clients[opponent_idx].name, opponent_fd);
+            if (opponent_idx != -1 && clients[opponent_idx].active) {
+                clients[opponent_idx].state = CLIENT_STATE_LOBBY;
+                clients[opponent_idx].game_id = 0;
+                LOG("Opponent '%s' (fd %d) moved to LOBBY as game %d ended due to opponent leaving IN_PROGRESS.\n", clients[opponent_idx].name, opponent_fd, game->id);
             }
         } else {
              LOG("Opponent for leaving player %d not found or already disconnected.\n", leaving_client_fd);
         }
-         LOG("Game %d (index %d) set to FINISHED due to player leaving.\n", game->id, game_idx);
-    }
-    // Caso 4: Il giocatore esce dopo che la partita è già finita (FINISHED)
-    // Usa state_at_entry per la condizione
-    else if ((was_player1 || was_player2) && state_at_entry == GAME_STATE_FINISHED) {
-        LOG("Player '%s' left after game %d already FINISHED. Marking fd as disconnected.\n",
+         LOG("Game %d (index %d) set to FINISHED due to player leaving IN_PROGRESS.\n", game->id, game_idx);
+
+         // Controlla se anche l'altro è già disconnesso per pulire lo slot
+         if(opponent_fd < 0){ // Se l'avversario non è valido
+            LOG("Both players seem disconnected for game %d after one left IN_PROGRESS. Resetting slot.\n", game->id);
+            reset_game_slot_to_empty_unsafe(game_idx);
+            game_reset_to_empty = true;
+         }
+
+
+    // Caso 4: Giocatore (P1 o P2) lascia DOPO la fine (FINISHED)
+    } else if ((was_player1 || was_player2) && state_at_entry == GAME_STATE_FINISHED) {
+        LOG("Player '%s' left after game %d already FINISHED.\n",
              leaving_client_name ? leaving_client_name : "Player", game->id);
-        // Azioni: Marca solo il fd come invalido per evitare futuri tentativi di invio
+
+        // Trova l'avversario (potrebbe essere già -2)
+        opponent_fd = find_opponent_fd(game, leaving_client_fd);
+        opponent_idx = find_client_index_unsafe(opponent_fd); // Cerca l'indice solo se fd non è -2
+
+        // Determina se chi esce è il vincitore, il perdente o se era un pareggio
+        bool is_winner = (game->winner_fd == leaving_client_fd);
+        bool is_draw = (game->winner_fd == -1);
+
+        // Marca chi è uscito come invalido nella partita
         if (was_player1) game->player1_fd = -2;
         else game->player2_fd = -2;
-    }
-    // Caso 5: Il giocatore non era attivamente coinvolto o stato inatteso
-    else {
-         // Stampa lo stato letto all'inizio per il debug
-         LOG("Player '%s' (fd %d) left game %d in unexpected state %d or wasn't actively involved (P1:%d, P2:%d, Pend:%d). No game state change.\n",
+
+        if (is_winner) {
+            // --- Il VINCITORE esce prima di rispondere a REMATCH ---
+            LOG("WINNER '%s' (fd %d) left game %d after FINISH. Forfeits rematch.\n",
+                 leaving_client_name, leaving_client_fd, game->id);
+            game->winner_fd = -2; // Marca vincitore come uscito/invalido
+
+            // Notifica il perdente (se ancora connesso) e mettilo in lobby
+            if (opponent_fd >= 0 && opponent_idx != -1 && clients[opponent_idx].active) {
+                LOG("Notifying loser '%s' (fd %d) that winner left. Moving to LOBBY.\n", clients[opponent_idx].name, opponent_fd);
+                send_to_client(opponent_fd, NOTIFY_WINNER_LEFT_AFTER_GAME); // Messaggio specifico
+                clients[opponent_idx].state = CLIENT_STATE_LOBBY;
+                clients[opponent_idx].game_id = 0;
+            } else {
+                 LOG("Loser (original fd %d) already disconnected or inactive.\n", opponent_fd);
+                 // Se anche il perdente era già -2, resetta lo slot
+                 if(opponent_fd == -2){
+                    LOG("Both winner and loser are -2 for game %d. Resetting slot.\n", game->id);
+                    reset_game_slot_to_empty_unsafe(game_idx);
+                    game_reset_to_empty = true;
+                 }
+            }
+        } else if (is_draw) {
+             // --- Un giocatore esce dopo un PAREGGIO ---
+             LOG("Player '%s' (fd %d) left game %d after DRAW.\n", leaving_client_name, leaving_client_fd, game->id);
+
+             // Notifica l'altro giocatore (se ancora connesso) e mettilo in lobby
+             if (opponent_fd >= 0 && opponent_idx != -1 && clients[opponent_idx].active) {
+                 LOG("Notifying opponent '%s' (fd %d) that other player left after draw. Moving to LOBBY.\n", clients[opponent_idx].name, opponent_fd);
+                 send_to_client(opponent_fd, NOTIFY_OPPONENT_LEFT); // Messaggio generico
+                 clients[opponent_idx].state = CLIENT_STATE_LOBBY;
+                 clients[opponent_idx].game_id = 0;
+             } else {
+                 LOG("Other player (original fd %d) in draw already disconnected or inactive.\n", opponent_fd);
+                 // Se anche l'altro era già -2, resetta lo slot
+                 if(opponent_fd == -2){
+                    LOG("Both players are -2 for game %d after draw. Resetting slot.\n", game->id);
+                    reset_game_slot_to_empty_unsafe(game_idx);
+                    game_reset_to_empty = true;
+                 }
+             }
+        } else {
+            // --- Il PERDENTE esce ---
+            LOG("LOSER '%s' (fd %d) left game %d after FINISH.\n",
+                 leaving_client_name, leaving_client_fd, game->id);
+            // Nessuna azione necessaria sul vincitore qui.
+            // Se il vincitore era l'opponent_fd, controlla se è ancora valido
+            if (opponent_fd == -2) { // Se il vincitore si era già disconnesso
+                LOG("Loser left after winner already left for game %d. Resetting slot.\n", game->id);
+                reset_game_slot_to_empty_unsafe(game_idx);
+                game_reset_to_empty = true;
+            } else {
+                LOG("Winner (original fd %d) remains, awaiting rematch choice or disconnect.\n", opponent_fd);
+            }
+        }
+
+    // Caso 5: Uscita inattesa
+    } else {
+         LOG("Player '%s' (fd %d) left game %d in unexpected state %d or wasn't actively involved (P1:%d, P2:%d, Pend:%d, Win:%d). No game state change.\n",
             leaving_client_name ? leaving_client_name : "Player",
             leaving_client_fd, game->id, state_at_entry,
-            game->player1_fd, game->player2_fd, game->pending_joiner_fd);
+            game->player1_fd, game->player2_fd, game->pending_joiner_fd, game->winner_fd);
     }
 
-    return game_reset_to_empty; // Ritorna true solo se lo slot è stato resettato
+    // --- Pulizia Finale dello Slot ---
+    // Questa logica è ridondante ora che resettiamo lo slot quando P1/P2 diventano entrambi -2 nello stato FINISHED
+    // // Controlla se entrambi i giocatori sono ora disconnessi (-2) E lo stato è FINISHED o EMPTY
+    // if ((game->state == GAME_STATE_FINISHED || game->state == GAME_STATE_EMPTY) // Controlla anche EMPTY nel caso raro sia stato resettato ma siamo ancora qui
+    //     && game->player1_fd == -2 && game->player2_fd == -2
+    //     && !game_reset_to_empty ) { // E non l'abbiamo già resettato
+    //     LOG("Both players marked as left (-2) for game %d. Resetting game slot %d.\n", game->id, game_idx);
+    //     reset_game_slot_to_empty_unsafe(game_idx);
+    //     game_reset_to_empty = true;
+    // }
+
+    return game_reset_to_empty;
 }
 
 void broadcast_game_state(int game_idx) {

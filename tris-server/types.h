@@ -18,7 +18,7 @@ typedef enum {
     CLIENT_STATE_CONNECTED, // Appena connesso, in attesa di nome
     CLIENT_STATE_LOBBY,     // Ha un nome, nella lobby
     CLIENT_STATE_WAITING,   // Creatore in attesa di P2 o Richiedente in attesa di risposta
-    CLIENT_STATE_PLAYING    // In partita
+    CLIENT_STATE_PLAYING    // In partita o appena finita in attesa di rematch
 } ClientState;
 
 typedef enum {
@@ -46,6 +46,7 @@ typedef struct {
     char player2_name[MAX_NAME_LEN];
     int pending_joiner_fd;  // fd del giocatore in attesa di join (-1 se nessuno)
     char pending_joiner_name[MAX_NAME_LEN];
+    int winner_fd;          // fd del vincitore (-1 se pareggio/non finito/nessuno), -2 se il vincitore si è disconnesso dopo la fine ma prima del rematch
 } GameInfo;
 
 typedef struct {
