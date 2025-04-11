@@ -11,16 +11,19 @@
    <children>
       <VBox alignment="CENTER" prefHeight="150.0" prefWidth="150.0" spacing="30.0">
          <children>
-            <Label fx:id="labelNumeroPartita" text="Partita numero 3">
+            <!-- Testo placeholder, viene impostato dinamicamente -->
+            <Label fx:id="labelNumeroPartita" text="Partita #">
                <font>
                   <Font size="15.0" />
                </font>
             </Label>
+            <!-- Testo placeholder, viene impostato dinamicamente -->
             <Label fx:id="labelStatoPartita" text="Stato" style="-fx-font-style: italic;">
                <font>
                   <Font size="15.0" />
                </font>
             </Label>
+            <!-- Testo già in Italiano -->
             <Button fx:id="buttonUniscitiPartita" mnemonicParsing="false" text="Unisciti" onAction="#handleUniscitiPartita">
                <font>
                   <Font size="15.0" />

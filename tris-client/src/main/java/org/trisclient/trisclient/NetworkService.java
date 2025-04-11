@@ -1,4 +1,3 @@
-/* ======== NetworkService.java ======== */
 package org.trisclient.trisclient;
 
 import javafx.application.Platform;
@@ -36,15 +35,15 @@ public class NetworkService {
         return LocalDateTime.now().format(TIMESTAMP_FORMATTER);
     }
 
-    // Interfaccia ServerListener
+    // Interfaccia ServerListener (nomi metodi non tradotti)
     public interface ServerListener {
         void onConnected();
         void onDisconnected(String reason);
         void onMessageReceived(String rawMessage);
-        void onError(String message); // Gestisce errori generici
+        void onError(String message);
         void onNameRequested();
         void onNameAccepted();
-        void onNameRejected(String reason); // <<< NUOVO: Per gestire specificamente nome rifiutato
+        void onNameRejected(String reason);
         void onGamesList(List<GameInfo> games);
         void onActionConfirmed(String message);
         void onGameCreated(int gameId);
@@ -63,11 +62,11 @@ public class NetworkService {
         void onOpponentRematchDecision(boolean opponentAccepted);
     }
 
-    // GameInfo (invariato)
+    // GameInfo (toString tradotto)
     public static class GameInfo {
         public final int id;
         public final String creatorName;
-        public final String state;
+        public final String state; // Lo stato viene dal server, NON tradurlo qui
 
         public GameInfo(int id, String creatorName, String state) {
             this.id = id;
@@ -75,7 +74,8 @@ public class NetworkService {
             this.state = state;
         }
         @Override public String toString() {
-            return "Partita " + id + " (da " + creatorName + ") - " + state;
+            // Traduce la rappresentazione testuale, ma usa 'state' com'è
+            return "Partita " + id + " (di " + creatorName + ") - " + state; // Tradotto
         }
     }
 
@@ -84,12 +84,12 @@ public class NetworkService {
         String newListenerName = (newListener != null) ? newListener.getClass().getSimpleName() + " ("+newListener.hashCode()+")" : "null";
         listenerRef.set(newListener);
         this.currentListenerName = newListenerName;
-        System.out.println(getCurrentTimestamp() + " - NetworkService: *** setServerListener called *** | Old listener: " + oldListenerName + " | New listener: " + newListenerName);
+        System.out.println(getCurrentTimestamp() + " - NetworkService: *** setServerListener chiamato *** | Vecchio listener: " + oldListenerName + " | Nuovo listener: " + newListenerName); // Tradotto
     }
 
     public void connect(String host, int port, ServerListener initialListener) {
         if (!canAttemptConnect()) {
-            System.out.println(getCurrentTimestamp() + " - NetworkService: connect() called but cannot attempt connection (already running or executor active?).");
+            System.out.println(getCurrentTimestamp() + " - NetworkService: connect() chiamato ma impossibile tentare la connessione (già in esecuzione o executor attivo?)."); // Tradotto
             return;
         }
 
@@ -102,76 +102,76 @@ public class NetworkService {
                 t.setDaemon(true);
                 return t;
             });
-            System.out.println(getCurrentTimestamp()+" - NetworkService: Created new NetworkExecutor.");
+            System.out.println(getCurrentTimestamp()+" - NetworkService: Creato nuovo NetworkExecutor."); // Tradotto
         }
 
         networkExecutor.submit(() -> {
-            System.out.println(getCurrentTimestamp() + " - NetworkService (in executor): Starting connection task.");
+            System.out.println(getCurrentTimestamp() + " - NetworkService (in executor): Avvio task di connessione."); // Tradotto
             try {
-                System.out.println(getCurrentTimestamp() + " - NetworkService (in executor): Connecting to " + host + ":" + port + "...");
+                System.out.println(getCurrentTimestamp() + " - NetworkService (in executor): Connessione a " + host + ":" + port + "..."); // Tradotto
                 socket = new Socket(host, port);
                 out = new PrintWriter(socket.getOutputStream(), true);
                 in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-                System.out.println(getCurrentTimestamp() + " - NetworkService (in executor): Connection established.");
+                System.out.println(getCurrentTimestamp() + " - NetworkService (in executor): Connessione stabilita."); // Tradotto
 
                 Platform.runLater(() -> {
                     ServerListener currentListener = listenerRef.get();
                     if (currentListener != null) {
                         currentListener.onConnected();
                     } else {
-                        System.err.println(getCurrentTimestamp()+" - NetworkService: Listener is NULL in onConnected callback!");
+                        System.err.println(getCurrentTimestamp()+" - NetworkService: Listener è NULL nel callback onConnected!"); // Tradotto
                     }
                 });
 
-                System.out.println(getCurrentTimestamp() + " - NetworkService (in executor): Listener thread starting loop. Active listener: " + currentListenerName);
+                System.out.println(getCurrentTimestamp() + " - NetworkService (in executor): Thread listener avvia ciclo. Listener attivo: " + currentListenerName); // Tradotto
                 String serverMessage;
                 while (running && (serverMessage = in.readLine()) != null) {
                     final String message = serverMessage;
-                    System.out.println(getCurrentTimestamp() + " - RAW FROM SERVER: [" + message + "]");
+                    System.out.println(getCurrentTimestamp() + " - RAW DAL SERVER: [" + message + "]"); // Tradotto
 
                     Platform.runLater(() -> {
                         ServerListener currentListener = listenerRef.get();
                         if (currentListener != null) {
                             parseServerMessage(message, currentListener);
                         } else {
-                            System.err.println(getCurrentTimestamp() + " - NetworkService (in runLater): ERROR - No active listener to handle message: " + message);
+                            System.err.println(getCurrentTimestamp() + " - NetworkService (in runLater): ERRORE - Nessun listener attivo per gestire messaggio: " + message); // Tradotto
                         }
                     });
                 }
-                System.out.println(getCurrentTimestamp() + " - NetworkService (in executor): Read loop finished. Reason: running=" + running + " or readLine returned null.");
+                System.out.println(getCurrentTimestamp() + " - NetworkService (in executor): Ciclo di lettura terminato. Motivo: running=" + running + " o readLine ha restituito null."); // Tradotto
 
                 if (running) {
-                    System.out.println(getCurrentTimestamp() + " - NetworkService (in executor): Detected server closed connection unexpectedly (readLine returned null while running).");
-                    handleDisconnection("Server closed connection");
+                    System.out.println(getCurrentTimestamp() + " - NetworkService (in executor): Rilevata chiusura inattesa connessione server (readLine ha restituito null mentre running)."); // Tradotto
+                    handleDisconnection("Il server ha chiuso la connessione"); // Tradotto
                 }
 
             } catch (SocketException e) {
-                final String errorMsg = "Connection error: " + e.getMessage();
+                final String errorMsg = "Errore di connessione: " + e.getMessage(); // Tradotto
                 System.err.println(getCurrentTimestamp() + " - NetworkService (in executor): SocketException: " + e.getMessage() + " | running="+running);
                 if (running) {
                     handleDisconnection(errorMsg);
                 } else {
-                    System.out.println(getCurrentTimestamp() + " - NetworkService (in executor): Socket closed intentionally or during shutdown.");
+                    System.out.println(getCurrentTimestamp() + " - NetworkService (in executor): Socket chiuso intenzionalmente o durante lo spegnimento."); // Tradotto
                 }
             } catch (IOException e) {
-                final String errorMsg = "IO error: " + e.getMessage();
+                final String errorMsg = "Errore IO: " + e.getMessage(); // Tradotto
                 System.err.println(getCurrentTimestamp() + " - NetworkService (in executor): IOException: " + e.getMessage() + " | running="+running);
                 if (running) {
                     handleDisconnection(errorMsg);
                 }
             } finally {
-                System.out.println(getCurrentTimestamp() + " - NetworkService (in executor): Entering finally block.");
+                System.out.println(getCurrentTimestamp() + " - NetworkService (in executor): Ingresso nel blocco finally."); // Tradotto
                 closeResources();
-                System.out.println(getCurrentTimestamp() + " - NetworkService (in executor): Listener task finished.");
+                System.out.println(getCurrentTimestamp() + " - NetworkService (in executor): Task del listener terminato."); // Tradotto
             }
         });
-        System.out.println(getCurrentTimestamp()+" - NetworkService: Connection task submitted to executor.");
+        System.out.println(getCurrentTimestamp()+" - NetworkService: Task di connessione inviato all'executor."); // Tradotto
     }
 
     private void handleDisconnection(String reason) {
-        System.out.println(getCurrentTimestamp()+" - NetworkService: handleDisconnection called with reason: "+reason);
+        System.out.println(getCurrentTimestamp()+" - NetworkService: handleDisconnection chiamato con motivo: "+reason); // Tradotto
         if (!running) {
-            System.out.println(getCurrentTimestamp()+" - NetworkService: handleDisconnection ignored as 'running' is already false.");
+            System.out.println(getCurrentTimestamp()+" - NetworkService: handleDisconnection ignorato perchè 'running' è già false."); // Tradotto
             return;
         }
         running = false;
@@ -179,20 +179,19 @@ public class NetworkService {
         Platform.runLater(() -> {
             ServerListener currentListener = listenerRef.get();
             if (currentListener != null) {
-                System.out.println(getCurrentTimestamp()+" - NetworkService (in runLater): Notifying listener "+currentListener.getClass().getSimpleName()+" ("+currentListener.hashCode()+") of disconnection: "+reason);
-                currentListener.onDisconnected(reason);
+                System.out.println(getCurrentTimestamp()+" - NetworkService (in runLater): Notifica al listener "+currentListener.getClass().getSimpleName()+" ("+currentListener.hashCode()+") della disconnessione: "+reason); // Tradotto
+                currentListener.onDisconnected(reason); // Passa il motivo originale o tradotto
             } else {
-                System.err.println(getCurrentTimestamp()+" - NetworkService: Listener is NULL when handling disconnection!");
+                System.err.println(getCurrentTimestamp()+" - NetworkService: Listener è NULL durante la gestione della disconnessione!"); // Tradotto
             }
         });
     }
 
 
-    // --- parseServerMessage AGGIORNATO per il nuovo errore ---
     private void parseServerMessage(String message, ServerListener currentListener) {
         if (message == null || message.trim().isEmpty()) return;
         if(currentListener == null){
-            System.err.println(getCurrentTimestamp()+" - NetworkService: parseServerMessage - Listener is NULL! Cannot process: "+message);
+            System.err.println(getCurrentTimestamp()+" - NetworkService: parseServerMessage - Listener è NULL! Impossibile processare: "+message); // Tradotto
             return;
         }
 
@@ -201,10 +200,8 @@ public class NetworkService {
                 currentListener.onNameRequested();
             } else if (message.startsWith("RESP:NAME_OK")) {
                 currentListener.onNameAccepted();
-                // === NUOVO BLOCCO ERRORE NAME_TAKEN (prima di ERROR: generico) ===
             } else if (message.startsWith("ERROR:NAME_TAKEN")) {
-                currentListener.onNameRejected("Name already taken.");
-                // === FINE BLOCCO NUOVO ===
+                currentListener.onNameRejected("Nome già preso."); // Tradotto
             } else if (message.startsWith("RESP:GAMES_LIST;")) {
                 List<GameInfo> games = new ArrayList<>();
                 String content = message.substring("RESP:GAMES_LIST;".length());
@@ -216,13 +213,13 @@ public class NetworkService {
                             try {
                                 int id = Integer.parseInt(parts[0]);
                                 String name = parts[1];
-                                String state = parts[2];
+                                String state = parts[2]; // Non tradurre lo stato qui
                                 games.add(new GameInfo(id, name, state));
                             } catch (NumberFormatException | IndexOutOfBoundsException e) {
-                                System.err.println(getCurrentTimestamp() + " - Error parsing game entry in list: " + entry);
+                                System.err.println(getCurrentTimestamp() + " - Errore parsing voce partita nella lista: " + entry); // Tradotto
                             }
                         } else {
-                            System.err.println(getCurrentTimestamp() + " - Malformed game entry in list: " + entry);
+                            System.err.println(getCurrentTimestamp() + " - Voce partita malformata nella lista: " + entry); // Tradotto
                         }
                     }
                 }
@@ -232,24 +229,24 @@ public class NetworkService {
                     int gameId = Integer.parseInt(message.substring("RESP:CREATED ".length()).trim());
                     currentListener.onGameCreated(gameId);
                 } catch (NumberFormatException e){
-                    System.err.println(getCurrentTimestamp() + " - Error parsing game ID in CREATED: " + message);
-                    currentListener.onError("Invalid game ID format from server (CREATED)");
+                    System.err.println(getCurrentTimestamp() + " - Errore parsing ID partita in CREATED: " + message); // Tradotto
+                    currentListener.onError("Formato ID partita non valido dal server (CREATED)"); // Tradotto
                 }
             } else if (message.startsWith("RESP:REQUEST_SENT ")) {
                 try {
                     int gameId = Integer.parseInt(message.substring("RESP:REQUEST_SENT ".length()).trim());
                     currentListener.onJoinRequestSent(gameId);
                 } catch (NumberFormatException e) {
-                    System.err.println(getCurrentTimestamp() + " - Error parsing REQUEST_SENT game ID: " + message);
-                    currentListener.onError("Invalid format from server (REQUEST_SENT)");
+                    System.err.println(getCurrentTimestamp() + " - Errore parsing ID partita REQUEST_SENT: " + message); // Tradotto
+                    currentListener.onError("Formato non valido dal server (REQUEST_SENT)"); // Tradotto
                 }
             } else if (message.startsWith("NOTIFY:JOIN_REQUEST ")) {
                 String requesterName = message.substring("NOTIFY:JOIN_REQUEST ".length()).trim();
                 if (!requesterName.isEmpty()) {
                     currentListener.onJoinRequestReceived(requesterName);
                 } else {
-                    System.err.println(getCurrentTimestamp() + " - Malformed JOIN_REQUEST (empty name): " + message);
-                    currentListener.onError("Malformed JOIN_REQUEST message from server (empty name)");
+                    System.err.println(getCurrentTimestamp() + " - JOIN_REQUEST malformato (nome vuoto): " + message); // Tradotto
+                    currentListener.onError("Messaggio JOIN_REQUEST malformato dal server (nome vuoto)"); // Tradotto
                 }
             } else if (message.startsWith("RESP:JOIN_ACCEPTED ")) {
                 String[] parts = message.substring("RESP:JOIN_ACCEPTED ".length()).split(" ");
@@ -260,12 +257,12 @@ public class NetworkService {
                         String opponentName = String.join(" ", Arrays.copyOfRange(parts, 2, parts.length));
                         currentListener.onJoinAccepted(gameId, symbol, opponentName);
                     } catch(NumberFormatException | IndexOutOfBoundsException e){
-                        System.err.println(getCurrentTimestamp() + " - Error parsing JOIN_ACCEPTED: " + message);
-                        currentListener.onError("Invalid format from server (JOIN_ACCEPTED)");
+                        System.err.println(getCurrentTimestamp() + " - Errore parsing JOIN_ACCEPTED: " + message); // Tradotto
+                        currentListener.onError("Formato non valido dal server (JOIN_ACCEPTED)"); // Tradotto
                     }
                 } else {
-                    System.err.println(getCurrentTimestamp() + " - Malformed JOIN_ACCEPTED message: " + message);
-                    currentListener.onError("Malformed JOIN_ACCEPTED message from server");
+                    System.err.println(getCurrentTimestamp() + " - Messaggio JOIN_ACCEPTED malformato: " + message); // Tradotto
+                    currentListener.onError("Messaggio JOIN_ACCEPTED malformato dal server"); // Tradotto
                 }
             } else if (message.startsWith("RESP:JOIN_REJECTED ")) {
                 String[] parts = message.substring("RESP:JOIN_REJECTED ".length()).split(" ");
@@ -275,16 +272,17 @@ public class NetworkService {
                         String creatorName = String.join(" ", Arrays.copyOfRange(parts, 1, parts.length));
                         currentListener.onJoinRejected(gameId, creatorName);
                     } catch (NumberFormatException e) {
-                        System.err.println(getCurrentTimestamp() + " - Error parsing JOIN_REJECTED game ID: " + message);
-                        currentListener.onError("Invalid format from server (JOIN_REJECTED ID)");
+                        System.err.println(getCurrentTimestamp() + " - Errore parsing ID partita JOIN_REJECTED: " + message); // Tradotto
+                        currentListener.onError("Formato non valido dal server (JOIN_REJECTED ID)"); // Tradotto
                     }
                 } else {
-                    System.err.println(getCurrentTimestamp() + " - Malformed JOIN_REJECTED message: " + message);
-                    currentListener.onError("Malformed JOIN_REJECTED message from server");
+                    System.err.println(getCurrentTimestamp() + " - Messaggio JOIN_REJECTED malformato: " + message); // Tradotto
+                    currentListener.onError("Messaggio JOIN_REJECTED malformato dal server"); // Tradotto
                 }
             } else if (message.startsWith("RESP:REJECT_OK ")) {
                 String rejectedName = message.substring("RESP:REJECT_OK ".length()).trim();
-                currentListener.onActionConfirmed("Rejected request from " + rejectedName);
+                // Traduci il messaggio passato al listener
+                currentListener.onActionConfirmed("Richiesta rifiutata da " + rejectedName); // Tradotto
             } else if (message.startsWith("NOTIFY:GAME_START ")) {
                 String[] parts = message.substring("NOTIFY:GAME_START ".length()).split(" ");
                 if (parts.length >= 3) {
@@ -294,12 +292,12 @@ public class NetworkService {
                         String opponentName = String.join(" ", Arrays.copyOfRange(parts, 2, parts.length));
                         currentListener.onGameStart(gameId, symbol, opponentName);
                     } catch(NumberFormatException | IndexOutOfBoundsException e){
-                        System.err.println(getCurrentTimestamp() + " - Error parsing GAME_START: " + message);
-                        currentListener.onError("Invalid format from server (GAME_START)");
+                        System.err.println(getCurrentTimestamp() + " - Errore parsing GAME_START: " + message); // Tradotto
+                        currentListener.onError("Formato non valido dal server (GAME_START)"); // Tradotto
                     }
                 } else {
-                    System.err.println(getCurrentTimestamp() + " - Malformed GAME_START message: " + message);
-                    currentListener.onError("Malformed GAME_START message from server");
+                    System.err.println(getCurrentTimestamp() + " - Messaggio GAME_START malformato: " + message); // Tradotto
+                    currentListener.onError("Messaggio GAME_START malformato dal server"); // Tradotto
                 }
             } else if (message.startsWith("NOTIFY:BOARD ")) {
                 String boardData = message.substring("NOTIFY:BOARD ".length());
@@ -307,13 +305,13 @@ public class NetworkService {
                 if(boardCells.length == 9) {
                     currentListener.onBoardUpdate(boardCells);
                 } else {
-                    System.err.println(getCurrentTimestamp() + " - Malformed BOARD message (length != 9): " + message);
-                    currentListener.onError("Malformed BOARD message from server");
+                    System.err.println(getCurrentTimestamp() + " - Messaggio BOARD malformato (lunghezza != 9): " + message); // Tradotto
+                    currentListener.onError("Messaggio BOARD malformato dal server"); // Tradotto
                 }
             } else if (message.startsWith("NOTIFY:YOUR_TURN")) {
                 currentListener.onYourTurn();
             } else if (message.startsWith("NOTIFY:GAMEOVER ")) {
-                String result = message.substring("NOTIFY:GAMEOVER ".length()).trim();
+                String result = message.substring("NOTIFY:GAMEOVER ".length()).trim(); // Non tradurre WIN/LOSE/DRAW qui
                 currentListener.onGameOver(result);
             } else if (message.startsWith("NOTIFY:OPPONENT_LEFT")) {
                 currentListener.onOpponentLeft();
@@ -327,12 +325,12 @@ public class NetworkService {
                         int gameId = Integer.parseInt(parts[0]);
                         currentListener.onRematchAccepted(gameId);
                     } catch (NumberFormatException e) {
-                        System.err.println(getCurrentTimestamp() + " - Error parsing REMATCH_ACCEPTED game ID: " + message);
-                        currentListener.onError("Invalid format from server (REMATCH_ACCEPTED ID)");
+                        System.err.println(getCurrentTimestamp() + " - Errore parsing ID partita REMATCH_ACCEPTED: " + message); // Tradotto
+                        currentListener.onError("Formato non valido dal server (REMATCH_ACCEPTED ID)"); // Tradotto
                     }
                 } else {
-                    System.err.println(getCurrentTimestamp() + " - Malformed REMATCH_ACCEPTED message: " + message);
-                    currentListener.onError("Malformed REMATCH_ACCEPTED message from server");
+                    System.err.println(getCurrentTimestamp() + " - Messaggio REMATCH_ACCEPTED malformato: " + message); // Tradotto
+                    currentListener.onError("Messaggio REMATCH_ACCEPTED malformato dal server"); // Tradotto
                 }
             } else if (message.startsWith("RESP:REMATCH_DECLINED")) {
                 currentListener.onRematchDeclined();
@@ -341,31 +339,37 @@ public class NetworkService {
             } else if (message.startsWith("NOTIFY:OPPONENT_DECLINED")) {
                 currentListener.onOpponentRematchDecision(false);
             } else if (message.startsWith("NOTIFY:SERVER_SHUTDOWN")) {
-                System.out.println(getCurrentTimestamp()+" - NetworkService: Handling Server Shutdown message.");
-                handleDisconnection("Server is shutting down");
+                System.out.println(getCurrentTimestamp()+" - NetworkService: Gestione messaggio Spegnimento Server."); // Tradotto
+                handleDisconnection("Il server si sta spegnendo"); // Tradotto
                 closeResources();
-            } else if (message.startsWith("ERROR:")) { // Errore generico
+            } else if (message.startsWith("ERROR:")) {
                 String errorMsg = message.substring("ERROR:".length()).trim();
-                currentListener.onError(errorMsg); // Chiamata a onError generico
+                // Prova a tradurre errori comuni, altrimenti passa l'originale
+                String translatedError = errorMsg;
+                if (errorMsg.contains("Unknown command or invalid state")) translatedError = "Comando sconosciuto o stato non valido";
+                else if (errorMsg.contains("Not your turn")) translatedError = "Non è il tuo turno";
+                else if (errorMsg.contains("Invalid move")) translatedError = "Mossa non valida";
+                else if (errorMsg.contains("Game not found")) translatedError = "Partita non trovata";
+                else if (errorMsg.contains("Game is full")) translatedError = "Partita piena";
+                else if (errorMsg.contains("Invalid request")) translatedError = "Richiesta non valida";
+                // Passa il messaggio (originale o tradotto)
+                currentListener.onError(translatedError + " (" + errorMsg + ")"); // Aggiungi l'originale per debug? O solo tradotto
             } else {
-                System.out.println(getCurrentTimestamp()+" - NetworkService: Received unhandled message type.");
+                System.out.println(getCurrentTimestamp()+" - NetworkService: Ricevuto tipo di messaggio non gestito."); // Tradotto
                 currentListener.onMessageReceived(message);
             }
         } catch (Exception e) {
-            System.err.println(getCurrentTimestamp() + " - CRITICAL Error PARSING server message: [" + message + "]");
+            System.err.println(getCurrentTimestamp() + " - ERRORE CRITICO PARSING messaggio server: [" + message + "]"); // Tradotto
             e.printStackTrace();
             try {
-                currentListener.onError("Client error parsing message: " + e.getMessage());
+                currentListener.onError("Errore client nel parsing del messaggio: " + e.getMessage()); // Tradotto
             } catch (Exception innerE) {
-                System.err.println(getCurrentTimestamp() + " - Error calling listener.onError after parsing exception!");
+                System.err.println(getCurrentTimestamp() + " - Errore chiamata listener.onError dopo eccezione parsing!"); // Tradotto
                 innerE.printStackTrace();
             }
         }
     }
 
-
-    // Metodo sendMessage e tutti gli altri (invariati)
-    // ... (sendName, sendListRequest, etc., disconnect, closeResources...)
 
     public void sendMessage(String message) {
         final String msgToSend = message;
@@ -374,31 +378,33 @@ public class NetworkService {
 
         if (running && currentOut != null && currentSocket != null && currentSocket.isConnected() && !currentSocket.isClosed() && !currentOut.checkError()) {
             try {
-                System.out.println(getCurrentTimestamp() + " - NetworkService (direct send): Sending: [" + msgToSend + "]");
+                System.out.println(getCurrentTimestamp() + " - NetworkService (invio diretto): Invio: [" + msgToSend + "]"); // Tradotto
                 currentOut.println(msgToSend);
                 if (currentOut.checkError()) {
-                    System.err.println(getCurrentTimestamp() + " - NetworkService (direct send): PrintWriter error detected AFTER sending. Likely disconnected.");
+                    System.err.println(getCurrentTimestamp() + " - NetworkService (invio diretto): Errore PrintWriter rilevato DOPO invio. Probabilmente disconnesso."); // Tradotto
                     if(running) {
-                        handleDisconnection("Send failed (PrintWriter error)");
+                        handleDisconnection("Invio fallito (errore PrintWriter)"); // Tradotto
                     }
                 }
             } catch (Exception e) {
-                System.err.println(getCurrentTimestamp() + " - NetworkService (direct send): Exception during send: "+e.getMessage());
+                System.err.println(getCurrentTimestamp() + " - NetworkService (invio diretto): Eccezione durante invio: "+e.getMessage()); // Tradotto
                 if(running) {
-                    handleDisconnection("Send failed (Exception)");
+                    handleDisconnection("Invio fallito (Eccezione)"); // Tradotto
                 }
             }
         } else {
-            System.err.println(getCurrentTimestamp() + " - Cannot send message, connection state invalid. Message: [" + msgToSend + "]");
-            System.err.println(getCurrentTimestamp() + " - Send Check: running="+running+", socket="+(currentSocket != null)+", socket.isConnected="+(currentSocket != null ? currentSocket.isConnected():"N/A")+", socket.isClosed="+(currentSocket != null ? currentSocket.isClosed():"N/A")+", out="+(currentOut!=null)+", out.checkError="+(currentOut != null ? currentOut.checkError() : "N/A"));
+            System.err.println(getCurrentTimestamp() + " - Impossibile inviare messaggio, stato connessione non valido. Messaggio: [" + msgToSend + "]"); // Tradotto
+            System.err.println(getCurrentTimestamp() + " - Controllo Invio: running="+running+", socket="+(currentSocket != null)+", socket.isConnected="+(currentSocket != null ? currentSocket.isConnected():"N/D")+", socket.isClosed="+(currentSocket != null ? currentSocket.isClosed():"N/D")+", out="+(currentOut!=null)+", out.checkError="+(currentOut != null ? currentOut.checkError() : "N/D"));
             if(!running){
                 Platform.runLater(() -> {
                     ServerListener l = listenerRef.get();
-                    if(l != null) l.onDisconnected("Attempted send while disconnected");
+                    if(l != null) l.onDisconnected("Tentativo di invio mentre disconnesso"); // Tradotto
                 });
             }
         }
     }
+    // Metodi send* non modificano stringhe utente
+
     public void sendName(String name) { sendMessage("NAME " + name); }
     public void sendListRequest() { sendMessage("LIST"); }
     public void sendCreateGame() { sendMessage("CREATE"); }
@@ -412,61 +418,61 @@ public class NetworkService {
     }
 
     public void disconnect() {
-        System.out.println(getCurrentTimestamp() + " - NetworkService: disconnect() CALLED (Window Close/App Exit).");
+        System.out.println(getCurrentTimestamp() + " - NetworkService: disconnect() CHIAMATO."); // Tradotto
         if (!running) {
-            System.out.println(getCurrentTimestamp() + " - NetworkService: disconnect() ignored, already not running.");
+            System.out.println(getCurrentTimestamp() + " - NetworkService: disconnect() ignorato, già non in esecuzione."); // Tradotto
             shutdownExecutor();
             return;
         }
 
-        handleDisconnection("Disconnected by client");
+        handleDisconnection("Disconnesso dal client"); // Tradotto
         closeResources();
         shutdownExecutor();
 
-        System.out.println(getCurrentTimestamp() + " - NetworkService: disconnect() finished.");
+        System.out.println(getCurrentTimestamp() + " - NetworkService: disconnect() terminato."); // Tradotto
     }
 
     private synchronized void closeResources() {
-        System.out.println(getCurrentTimestamp() + " - NetworkService: closeResources() CALLED.");
+        System.out.println(getCurrentTimestamp() + " - NetworkService: closeResources() CHIAMATO."); // Tradotto
         if (out != null) {
-            System.out.println(getCurrentTimestamp() + " - NetworkService: Closing PrintWriter.");
+            System.out.println(getCurrentTimestamp() + " - NetworkService: Chiusura PrintWriter."); // Tradotto
             out.close();
             out = null;
         }
         if (socket != null && !socket.isClosed()) {
-            System.out.println(getCurrentTimestamp() + " - NetworkService: Closing Socket.");
+            System.out.println(getCurrentTimestamp() + " - NetworkService: Chiusura Socket."); // Tradotto
             try {
                 socket.close();
             } catch (IOException e) {
-                System.err.println(getCurrentTimestamp() + " - NetworkService: Error closing socket: " + e.getMessage());
+                System.err.println(getCurrentTimestamp() + " - NetworkService: Errore chiusura socket: " + e.getMessage()); // Tradotto
             }
             socket = null;
         }
         if (in != null) {
-            System.out.println(getCurrentTimestamp() + " - NetworkService: Closing BufferedReader.");
+            System.out.println(getCurrentTimestamp() + " - NetworkService: Chiusura BufferedReader."); // Tradotto
             try {
                 in.close();
             } catch (IOException e) {
-                System.err.println(getCurrentTimestamp() + " - NetworkService: Error closing BufferedReader (may be expected after socket close): " + e.getMessage());
+                System.err.println(getCurrentTimestamp() + " - NetworkService: Errore chiusura BufferedReader (può essere atteso dopo chiusura socket): " + e.getMessage()); // Tradotto
             }
             in = null;
         }
-        System.out.println(getCurrentTimestamp() + " - NetworkService: Network resources closed.");
+        System.out.println(getCurrentTimestamp() + " - NetworkService: Risorse di rete chiuse."); // Tradotto
     }
 
     private void shutdownExecutor() {
         if (networkExecutor != null && !networkExecutor.isShutdown()) {
-            System.out.println(getCurrentTimestamp() + " - NetworkService: Shutting down NetworkExecutor...");
+            System.out.println(getCurrentTimestamp() + " - NetworkService: Spegnimento NetworkExecutor..."); // Tradotto
             networkExecutor.shutdown();
             try {
                 if (!networkExecutor.awaitTermination(1, TimeUnit.SECONDS)) {
-                    System.err.println(getCurrentTimestamp() + " - NetworkService: Executor did not terminate gracefully, forcing shutdown.");
+                    System.err.println(getCurrentTimestamp() + " - NetworkService: Executor non terminato correttamente, forzatura spegnimento."); // Tradotto
                     networkExecutor.shutdownNow();
                 } else {
-                    System.out.println(getCurrentTimestamp() + " - NetworkService: NetworkExecutor terminated gracefully.");
+                    System.out.println(getCurrentTimestamp() + " - NetworkService: NetworkExecutor terminato correttamente."); // Tradotto
                 }
             } catch (InterruptedException ie) {
-                System.err.println(getCurrentTimestamp() + " - NetworkService: Interrupted while waiting for executor termination.");
+                System.err.println(getCurrentTimestamp() + " - NetworkService: Interrotto durante attesa terminazione executor."); // Tradotto
                 networkExecutor.shutdownNow();
                 Thread.currentThread().interrupt();
             }
@@ -483,7 +489,7 @@ public class NetworkService {
         return !running || (networkExecutor == null || networkExecutor.isShutdown() || networkExecutor.isTerminated());
     }
     public void cleanupExecutor() {
-        System.out.println(getCurrentTimestamp() + " - NetworkService: cleanupExecutor() called.");
+        System.out.println(getCurrentTimestamp() + " - NetworkService: cleanupExecutor() chiamato."); // Tradotto
         shutdownExecutor();
         networkExecutor = null;
     }

@@ -15,7 +15,8 @@
             <children>
                 <VBox alignment="CENTER" fillWidth="false" spacing="20.0">
                     <children>
-                        <Label fx:id="TextTurno" text="Turno di : ">
+                        <!-- Il testo qui è un placeholder, viene impostato dinamicamente -->
+                        <Label fx:id="TextTurno" text="Stato Partita">
                             <font>
                                 <Font size="30.0" />
                             </font>
@@ -32,6 +33,7 @@
                                 <RowConstraints minHeight="10.0" prefHeight="30.0" vgrow="SOMETIMES" />
                             </rowConstraints>
                         </GridPane>
+                        <!-- Testo già in Italiano -->
                         <Button fx:id="buttonLeave" mnemonicParsing="false" text="Abbandona partita" onAction="#handleLeaveGame">
                             <font>
                                 <Font size="21.0" />
