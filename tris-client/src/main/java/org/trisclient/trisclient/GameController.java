@@ -326,27 +326,40 @@ public class GameController implements Initializable, NetworkService.ServerListe
         gameActive.set(false); myTurn=false;
         opponentDeclinedWhileWaiting.set(false);
 
-        final String alertTitle = "Rematch Declined";
-        String alertContent = "The rematch was declined.\nReturning to the lobby.";
-        String returnReason = "Rematch declined";
+        // Rimuovi 'final' dalla dichiarazione di alertTitle
+        String alertTitle = "Rematch Info"; // Titolo generico
+        // ------------- FINE MODIFICA -------------
+
+        String alertContent = "Returning to the lobby.";
+        String returnReason = "Rematch declined or game ended";
 
         if ("LOSE".equalsIgnoreCase(lastGameResult)) {
-            alertContent = "Game lost.\nReturning to the lobby.";
+            alertContent = "Game lost. Returning to the lobby.";
             returnReason = "Lost game";
-        } else if (!wasWaiting && !"LOSE".equalsIgnoreCase(lastGameResult)) {
-            System.err.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): WARNING - Received RematchDeclined but wasn't waiting and didn't lose.");
+            // Lascia alertTitle al default ("Rematch Info" o potresti cambiarlo anche qui)
+            // alertTitle = "Game Over"; // Opzionale: cambio titolo per sconfitta
+        } else if (wasWaiting) {
+            alertTitle = "Rematch Cancelled"; // OK: riassegna a variabile non-final
+            alertContent = "The opponent had already declined the rematch.\nReturning to the lobby.";
+            returnReason = "Opponent declined first";
+        } else {
+            alertTitle = "Rematch Declined"; // OK: riassegna a variabile non-final
+            alertContent = "You declined the rematch.\nReturning to the lobby.";
+            returnReason = "Declined rematch";
         }
 
-        final String finalAlertContent = alertContent;
-        final String finalReturnReason = returnReason;
+        final String finalAlertContent = alertContent; // Questa può rimanere final
+        final String finalReturnReason = returnReason; // Questa può rimanere final
+        final String finalAlertTitle = alertTitle;     // Usa una nuova variabile final per la lambda
 
         Platform.runLater(() -> {
-            showInfo(alertTitle, finalAlertContent);
+            // Mostra UN SOLO popup qui, usando finalAlertTitle
+            showInfo(finalAlertTitle, finalAlertContent);
             if (returnToHomeCallback != null) {
                 returnToHomeCallback.accept(finalReturnReason);
             } else {
                 System.err.println("GC: returnToHomeCallback null after onRematchDeclined!");
-                showError("Critical Error", "Cannot return to lobby after game over. Callback missing.");
+                showError("Critical Error", "Cannot return to lobby after game over/rematch decline. Callback missing.");
             }
         });
     }
