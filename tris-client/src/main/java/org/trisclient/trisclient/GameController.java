@@ -313,31 +313,45 @@ public class GameController implements Initializable, NetworkService.ServerListe
         });
     }
 
-
     @Override
     public void onRematchDeclined() {
-        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): onRematchDeclined ricevuto. LastResult="+lastGameResult+" | WaitingFlag prima:"+gameFinishedWaitingRematch.get());
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): onRematchDeclined received. LastResult="+lastGameResult+" | WaitingFlag before:"+gameFinishedWaitingRematch.get());
 
-        boolean wasWaiting = gameFinishedWaitingRematch.getAndSet(false);
-        gameActive.set(false); myTurn=false;
-        opponentDeclinedWhileWaiting.set(false);
+        boolean wasWaiting = gameFinishedWaitingRematch.getAndSet(false); // Ottieni e resetta flag attesa
+        gameActive.set(false); // Gioco non più attivo
+        myTurn = false; // Non è il mio turno
+        opponentDeclinedWhileWaiting.set(false); // Resetta questo flag
 
-        String alertTitle = "Info Rivincita"; // Tradotto
-        String alertContent = "Ritorno alla lobby."; // Tradotto
-        String returnReason = "Rivincita rifiutata o partita terminata"; // Tradotto
-
+        // --- Logica Chiave ---
+        // Se questo messaggio è arrivato PERCHE' ABBIAMO PERSO (lastGameResult == LOSE),
+        // ignoriamo questo messaggio perché l'azione di ritorno alla lobby verrà gestita
+        // da onOpponentRematchDecision quando il vincitore decide.
         if ("LOSE".equalsIgnoreCase(lastGameResult)) {
-            alertContent = "Partita persa. Ritorno alla lobby."; // Tradotto
-            returnReason = "Partita persa"; // Tradotto
-            // alertTitle = "Partita Terminata"; // Opzionale
-        } else if (wasWaiting) {
-            alertTitle = "Rivincita Annullata"; // Tradotto
-            alertContent = "L'avversario aveva già rifiutato la rivincita.\nRitorno alla lobby."; // Tradotto
-            returnReason = "Avversario ha rifiutato prima"; // Tradotto
-        } else {
-            alertTitle = "Rivincita Rifiutata"; // Tradotto
-            alertContent = "Hai rifiutato la rivincita.\nRitorno alla lobby."; // Tradotto
-            returnReason = "Rivincita rifiutata"; // Tradotto
+            System.out.println(getCurrentTimestamp()+" - GC: Ignoring initial REMATCH_DECLINED for LOSE case. Waiting for opponent decision.");
+            // Resettiamo gameFinishedWaitingRematch qui perché abbiamo PERSO, non stiamo aspettando nulla
+            // L'abbiamo già fatto con getAndSet sopra, ma per chiarezza
+            gameFinishedWaitingRematch.set(false);
+            return; // << USCIAMO QUI SE ERA UNA SCONFITTA
+        }
+        // ------------------
+
+        // Se siamo qui, non abbiamo perso. Significa che:
+        // 1. Abbiamo inviato REMATCH NO noi stessi.
+        // 2. Abbiamo inviato REMATCH YES (in pareggio) ma l'avversario aveva già detto NO.
+
+        String alertTitle = "Info Rivincita";
+        String alertContent = "Returning to the lobby.";
+        String returnReason = "Rematch declined or game ended";
+
+        // Adatta i messaggi in base alla causa (se non era LOSE)
+        if (wasWaiting) { // Caso 2: Avevamo detto YES ma l'altro NO (quindi stavamo aspettando)
+            alertTitle = "Rivincita Annullata";
+            alertContent = "L'avversario aveva già rifiutato la rivincita.\nRitorno alla lobby.";
+            returnReason = "Avversario ha rifiutato prima";
+        } else { // Caso 1: Abbiamo detto NO noi
+            alertTitle = "Rivincita Rifiutata";
+            alertContent = "Hai rifiutato la rivincita.\nRitorno alla lobby.";
+            returnReason = "Rivincita rifiutata";
         }
 
         final String finalAlertContent = alertContent;
@@ -345,15 +359,59 @@ public class GameController implements Initializable, NetworkService.ServerListe
         final String finalAlertTitle = alertTitle;
 
         Platform.runLater(() -> {
+            // Mostra UN SOLO popup per questi casi
             showInfo(finalAlertTitle, finalAlertContent);
             if (returnToHomeCallback != null) {
                 returnToHomeCallback.accept(finalReturnReason);
             } else {
-                System.err.println("GC: returnToHomeCallback null dopo onRematchDeclined!");
-                showError("Errore Critico", "Impossibile tornare alla lobby dopo fine partita/rifiuto rivincita. Callback mancante."); // Tradotto
+                System.err.println("GC: returnToHomeCallback null after onRematchDeclined!");
+                showError("Errore Critico", "Impossibile tornare alla lobby dopo fine partita/rifiuto rivincita. Callback mancante.");
             }
         });
     }
+    // --- FINE onRematchDeclined() ---
+
+
+//    @Override
+//    public void onRematchDeclined() {
+//        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): onRematchDeclined ricevuto. LastResult="+lastGameResult+" | WaitingFlag prima:"+gameFinishedWaitingRematch.get());
+//
+//        boolean wasWaiting = gameFinishedWaitingRematch.getAndSet(false);
+//        gameActive.set(false); myTurn=false;
+//        opponentDeclinedWhileWaiting.set(false);
+//
+//        String alertTitle = "Info Rivincita"; // Tradotto
+//        String alertContent = "Ritorno alla lobby."; // Tradotto
+//        String returnReason = "Rivincita rifiutata o partita terminata"; // Tradotto
+//
+//        if ("LOSE".equalsIgnoreCase(lastGameResult)) {
+//            alertContent = "Partita persa. Ritorno alla lobby."; // Tradotto
+//            returnReason = "Partita persa"; // Tradotto
+//            // alertTitle = "Partita Terminata"; // Opzionale
+//        } else if (wasWaiting) {
+//            alertTitle = "Rivincita Annullata"; // Tradotto
+//            alertContent = "L'avversario aveva già rifiutato la rivincita.\nRitorno alla lobby."; // Tradotto
+//            returnReason = "Avversario ha rifiutato prima"; // Tradotto
+//        } else {
+//            alertTitle = "Rivincita Rifiutata"; // Tradotto
+//            alertContent = "Hai rifiutato la rivincita.\nRitorno alla lobby."; // Tradotto
+//            returnReason = "Rivincita rifiutata"; // Tradotto
+//        }
+//
+//        final String finalAlertContent = alertContent;
+//        final String finalReturnReason = returnReason;
+//        final String finalAlertTitle = alertTitle;
+//
+//        Platform.runLater(() -> {
+//            showInfo(finalAlertTitle, finalAlertContent);
+//            if (returnToHomeCallback != null) {
+//                returnToHomeCallback.accept(finalReturnReason);
+//            } else {
+//                System.err.println("GC: returnToHomeCallback null dopo onRematchDeclined!");
+//                showError("Errore Critico", "Impossibile tornare alla lobby dopo fine partita/rifiuto rivincita. Callback mancante."); // Tradotto
+//            }
+//        });
+//    }
 
     @Override
     public void onOpponentRematchDecision(boolean opponentAccepted) {
