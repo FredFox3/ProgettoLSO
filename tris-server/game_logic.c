@@ -344,26 +344,49 @@ bool handle_player_leaving_game(int game_idx, int leaving_client_fd, const char*
 }
 
 void broadcast_game_state(int game_idx) {
-    // ... (controllo game_idx come prima) ...
+    // Assume game_list_mutex is LOCKED by caller
+
+    if (game_idx < 0 || game_idx >= MAX_GAMES) {
+        LOG("Error: Invalid game_idx %d for broadcast_game_state\n", game_idx);
+        return;
+    }
+
     GameInfo *game = &games[game_idx];
-    char board_msg[BUFFER_SIZE]; // Buffer per l'intero messaggio NOTIFY:BOARD
-    char board_str[18]; // Buffer sufficiente per "X O - X O - X O -" (9 celle + 8 spazi + \0)
+    // Aggiunto controllo se slot è empty per evitare accessi strani
+    if(game->state == GAME_STATE_EMPTY) {
+        LOG("Warning: Attempted broadcast_game_state for EMPTY slot index %d\n", game_idx);
+        return;
+    }
 
-    // Prepara stringa board (ora su una riga)
+    char board_msg[BUFFER_SIZE];
+    char board_str[20]; // Buffer leggermente più grande per sicurezza
+
+    // 1. Prepara e invia la stringa della board
     board_to_string(game->board, board_str, sizeof(board_str));
+    snprintf(board_msg, sizeof(board_msg), "%s%s\n", NOTIFY_BOARD_PREFIX, board_str);
 
-    // Componi il messaggio completo
-    snprintf(board_msg, sizeof(board_msg), "%s%s\n", NOTIFY_BOARD_PREFIX, board_str); // NOTIFY:BOARD <board_su_una_riga>\n
+    // Invia stato board a entrambi i giocatori validi (fd >= 0)
+    if (game->player1_fd >= 0) {
+        send_to_client(game->player1_fd, board_msg);
+    }
+    if (game->player2_fd >= 0) {
+        send_to_client(game->player2_fd, board_msg);
+    }
 
-    // Invia stato board a entrambi (se fd validi)
-    if (game->player1_fd >= 0) send_to_client(game->player1_fd, board_msg);
-    if (game->player2_fd >= 0) send_to_client(game->player2_fd, board_msg);
-
-    // Invia notifica turno (solo se la partita è in corso e c'è un turno)
+    // 2. Invia la notifica del turno SE la partita è in corso E c'è un giocatore valido di turno
     if (game->state == GAME_STATE_IN_PROGRESS && game->current_turn_fd >= 0) {
-        // send_to_client già aggiunge \n implicitamente se non c'è,
-        // ma è buona pratica averlo nella costante o aggiungerlo qui.
-        // Assumiamo che NOTIFY_YOUR_TURN definito in game_logic.h finisca con \n
+        // === Log Esplicito PRIMA dell'invio ===
+        LOG("--- BROADCAST: Sending YOUR_TURN to fd %d for game %d (State: %d) ---\n",
+            game->current_turn_fd, game->id, game->state);
+        // ------------------------------------
         send_to_client(game->current_turn_fd, NOTIFY_YOUR_TURN);
+    } else {
+        // Log esplicito se NON si invia il turno (utile per debug)
+         char p1n[10], p2n[10]; // Buffer per convertire fd in stringa
+         snprintf(p1n, sizeof(p1n), "%d", game->player1_fd);
+         snprintf(p2n, sizeof(p2n), "%d", game->player2_fd);
+         LOG("--- BROADCAST: NOT sending YOUR_TURN for game %d (State: %d, Turn FD: %d, P1_FD: %s, P2_FD: %s) ---\n",
+            game->id, game->state, game->current_turn_fd,
+            p1n, p2n);
     }
 }
