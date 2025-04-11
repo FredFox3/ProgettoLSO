@@ -521,6 +521,29 @@ public class GameController implements Initializable, NetworkService.ServerListe
         } else { System.err.println("GC: ERROR GameStart received in unexpected state. Active="+gameActive.get()); }
     }
 
+    @Override
+    public void onNameRejected(String reason) {
+        System.err.println(getCurrentTimestamp() + " - GameController ("+this.hashCode()+"): !!! UNEXPECTED onNameRejected received: " + reason + " !!!");
+        gameActive.set(false); // Disattiva lo stato del gioco
+        gameFinishedWaitingRematch.set(false);
+        myTurn = false;
+        Platform.runLater(() -> {
+            showError("Critical State Error", "Received name rejection while in game: " + reason + "\nReturning to lobby.");
+            if (gridPane != null) gridPane.setDisable(true);
+            if (buttonLeave != null) buttonLeave.setDisable(true);
+            if (TextTurno != null) TextTurno.setText("Unexpected error...");
+
+            // Usa il callback per tornare alla home page
+            if (returnToHomeCallback != null) {
+                returnToHomeCallback.accept("Unexpected name rejection: " + reason);
+            } else {
+                System.err.println("GameController: CRITICAL - returnToHomeCallback is null after unexpected name rejection!");
+                // In caso estremo, disconnetti
+                if(networkService != null) networkService.disconnect();
+            }
+        });
+    }
+
     // --- Metodi Helper UI ---
     private void showInfo(String title, String content) { showAlert(Alert.AlertType.INFORMATION, title, content); }
     private void showError(String title, String content) { showAlert(Alert.AlertType.ERROR, title, content); }

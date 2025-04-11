@@ -1,3 +1,4 @@
+/* ======== NetworkService.java ======== */
 package org.trisclient.trisclient;
 
 import javafx.application.Platform;
@@ -35,14 +36,15 @@ public class NetworkService {
         return LocalDateTime.now().format(TIMESTAMP_FORMATTER);
     }
 
-    // Interfaccia ServerListener (con metodi rematch aggiunti nel passo precedente)
+    // Interfaccia ServerListener
     public interface ServerListener {
         void onConnected();
         void onDisconnected(String reason);
         void onMessageReceived(String rawMessage);
-        void onError(String message);
+        void onError(String message); // Gestisce errori generici
         void onNameRequested();
         void onNameAccepted();
+        void onNameRejected(String reason); // <<< NUOVO: Per gestire specificamente nome rifiutato
         void onGamesList(List<GameInfo> games);
         void onActionConfirmed(String message);
         void onGameCreated(int gameId);
@@ -55,7 +57,6 @@ public class NetworkService {
         void onYourTurn();
         void onGameOver(String result);
         void onOpponentLeft();
-        // Funzionalità Rivincita
         void onRematchOffer();
         void onRematchAccepted(int gameId);
         void onRematchDeclined();
@@ -77,9 +78,6 @@ public class NetworkService {
             return "Partita " + id + " (da " + creatorName + ") - " + state;
         }
     }
-
-    // Metodi setServerListener, connect, handleDisconnection (invariati)
-    // ...
 
     public void setServerListener(ServerListener newListener) {
         String oldListenerName = this.currentListenerName;
@@ -190,7 +188,7 @@ public class NetworkService {
     }
 
 
-    // --- parseServerMessage AGGIORNATO ---
+    // --- parseServerMessage AGGIORNATO per il nuovo errore ---
     private void parseServerMessage(String message, ServerListener currentListener) {
         if (message == null || message.trim().isEmpty()) return;
         if(currentListener == null){
@@ -203,8 +201,11 @@ public class NetworkService {
                 currentListener.onNameRequested();
             } else if (message.startsWith("RESP:NAME_OK")) {
                 currentListener.onNameAccepted();
+                // === NUOVO BLOCCO ERRORE NAME_TAKEN (prima di ERROR: generico) ===
+            } else if (message.startsWith("ERROR:NAME_TAKEN")) {
+                currentListener.onNameRejected("Name already taken.");
+                // === FINE BLOCCO NUOVO ===
             } else if (message.startsWith("RESP:GAMES_LIST;")) {
-                // ... (logica GAMES_LIST invariata) ...
                 List<GameInfo> games = new ArrayList<>();
                 String content = message.substring("RESP:GAMES_LIST;".length());
                 if (!content.isEmpty()) {
@@ -227,7 +228,6 @@ public class NetworkService {
                 }
                 currentListener.onGamesList(games);
             } else if (message.startsWith("RESP:CREATED ")) {
-                // ... (logica CREATED invariata) ...
                 try {
                     int gameId = Integer.parseInt(message.substring("RESP:CREATED ".length()).trim());
                     currentListener.onGameCreated(gameId);
@@ -236,7 +236,6 @@ public class NetworkService {
                     currentListener.onError("Invalid game ID format from server (CREATED)");
                 }
             } else if (message.startsWith("RESP:REQUEST_SENT ")) {
-                // ... (logica REQUEST_SENT invariata) ...
                 try {
                     int gameId = Integer.parseInt(message.substring("RESP:REQUEST_SENT ".length()).trim());
                     currentListener.onJoinRequestSent(gameId);
@@ -245,7 +244,6 @@ public class NetworkService {
                     currentListener.onError("Invalid format from server (REQUEST_SENT)");
                 }
             } else if (message.startsWith("NOTIFY:JOIN_REQUEST ")) {
-                // ... (logica JOIN_REQUEST invariata) ...
                 String requesterName = message.substring("NOTIFY:JOIN_REQUEST ".length()).trim();
                 if (!requesterName.isEmpty()) {
                     currentListener.onJoinRequestReceived(requesterName);
@@ -254,7 +252,6 @@ public class NetworkService {
                     currentListener.onError("Malformed JOIN_REQUEST message from server (empty name)");
                 }
             } else if (message.startsWith("RESP:JOIN_ACCEPTED ")) {
-                // ... (logica JOIN_ACCEPTED invariata) ...
                 String[] parts = message.substring("RESP:JOIN_ACCEPTED ".length()).split(" ");
                 if (parts.length >= 3) {
                     try {
@@ -271,7 +268,6 @@ public class NetworkService {
                     currentListener.onError("Malformed JOIN_ACCEPTED message from server");
                 }
             } else if (message.startsWith("RESP:JOIN_REJECTED ")) {
-                // ... (logica JOIN_REJECTED invariata) ...
                 String[] parts = message.substring("RESP:JOIN_REJECTED ".length()).split(" ");
                 if (parts.length >= 2) {
                     try {
@@ -287,11 +283,9 @@ public class NetworkService {
                     currentListener.onError("Malformed JOIN_REJECTED message from server");
                 }
             } else if (message.startsWith("RESP:REJECT_OK ")) {
-                // ... (logica REJECT_OK invariata) ...
                 String rejectedName = message.substring("RESP:REJECT_OK ".length()).trim();
                 currentListener.onActionConfirmed("Rejected request from " + rejectedName);
             } else if (message.startsWith("NOTIFY:GAME_START ")) {
-                // ... (logica GAME_START invariata) ...
                 String[] parts = message.substring("NOTIFY:GAME_START ".length()).split(" ");
                 if (parts.length >= 3) {
                     try {
@@ -308,7 +302,6 @@ public class NetworkService {
                     currentListener.onError("Malformed GAME_START message from server");
                 }
             } else if (message.startsWith("NOTIFY:BOARD ")) {
-                // ... (logica BOARD invariata) ...
                 String boardData = message.substring("NOTIFY:BOARD ".length());
                 String[] boardCells = boardData.split(" ");
                 if(boardCells.length == 9) {
@@ -324,13 +317,11 @@ public class NetworkService {
                 currentListener.onGameOver(result);
             } else if (message.startsWith("NOTIFY:OPPONENT_LEFT")) {
                 currentListener.onOpponentLeft();
-
-                // --- NUOVI MESSAGGI REMATCH ---
             } else if (message.startsWith("CMD:REMATCH_OFFER")) {
                 currentListener.onRematchOffer();
             } else if (message.startsWith("RESP:REMATCH_ACCEPTED ")) {
                 String content = message.substring("RESP:REMATCH_ACCEPTED ".length());
-                String[] parts = content.split(" "); // "123 Waiting for new opponent."
+                String[] parts = content.split(" ");
                 if(parts.length > 0) {
                     try {
                         int gameId = Integer.parseInt(parts[0]);
@@ -346,18 +337,16 @@ public class NetworkService {
             } else if (message.startsWith("RESP:REMATCH_DECLINED")) {
                 currentListener.onRematchDeclined();
             } else if (message.startsWith("NOTIFY:OPPONENT_ACCEPTED_REMATCH")) {
-                currentListener.onOpponentRematchDecision(true); // Il tuo avversario ha accettato
+                currentListener.onOpponentRematchDecision(true);
             } else if (message.startsWith("NOTIFY:OPPONENT_DECLINED")) {
-                currentListener.onOpponentRematchDecision(false); // Il tuo avversario ha rifiutato
-                // --- FINE NUOVI MESSAGGI REMATCH ---
-
+                currentListener.onOpponentRematchDecision(false);
             } else if (message.startsWith("NOTIFY:SERVER_SHUTDOWN")) {
                 System.out.println(getCurrentTimestamp()+" - NetworkService: Handling Server Shutdown message.");
                 handleDisconnection("Server is shutting down");
-                closeResources(); // Chiudi le risorse subito in caso di shutdown
-            } else if (message.startsWith("ERROR:")) {
+                closeResources();
+            } else if (message.startsWith("ERROR:")) { // Errore generico
                 String errorMsg = message.substring("ERROR:".length()).trim();
-                currentListener.onError(errorMsg);
+                currentListener.onError(errorMsg); // Chiamata a onError generico
             } else {
                 System.out.println(getCurrentTimestamp()+" - NetworkService: Received unhandled message type.");
                 currentListener.onMessageReceived(message);
@@ -375,8 +364,8 @@ public class NetworkService {
     }
 
 
-    // Metodo sendMessage (invariato)
-    // ...
+    // Metodo sendMessage e tutti gli altri (invariati)
+    // ... (sendName, sendListRequest, etc., disconnect, closeResources...)
 
     public void sendMessage(String message) {
         final String msgToSend = message;
@@ -410,9 +399,6 @@ public class NetworkService {
             }
         }
     }
-
-    // Metodi sendX commands (invariati, tranne l'aggiunta di sendRematchChoice)
-    // ...
     public void sendName(String name) { sendMessage("NAME " + name); }
     public void sendListRequest() { sendMessage("LIST"); }
     public void sendCreateGame() { sendMessage("CREATE"); }
@@ -421,20 +407,10 @@ public class NetworkService {
     public void sendRejectRequest(String playerName) { sendMessage("REJECT " + playerName); }
     public void sendMove(int row, int col) { sendMessage("MOVE " + row + " " + col); }
     public void sendQuit() { sendMessage("QUIT"); }
-
-    // --- NUOVO METODO per inviare la scelta della rivincita ---
-    /**
-     * Invia la scelta del giocatore riguardo alla rivincita.
-     * @param accept true se il giocatore accetta la rivincita, false altrimenti.
-     */
     public void sendRematchChoice(boolean accept) {
         sendMessage(accept ? "REMATCH YES" : "REMATCH NO");
     }
-    // --- FINE NUOVO METODO ---
 
-
-    // Metodi disconnect, closeResources, shutdownExecutor, isConnected, getCurrentListener, canAttemptConnect, cleanupExecutor (invariati)
-    // ...
     public void disconnect() {
         System.out.println(getCurrentTimestamp() + " - NetworkService: disconnect() CALLED (Window Close/App Exit).");
         if (!running) {
@@ -500,17 +476,12 @@ public class NetworkService {
     public boolean isConnected() {
         return running && socket != null && socket.isConnected() && !socket.isClosed() && out != null && !out.checkError() ;
     }
-
-
     public ServerListener getCurrentListener() {
         return listenerRef.get();
     }
-
     public boolean canAttemptConnect() {
         return !running || (networkExecutor == null || networkExecutor.isShutdown() || networkExecutor.isTerminated());
     }
-
-
     public void cleanupExecutor() {
         System.out.println(getCurrentTimestamp() + " - NetworkService: cleanupExecutor() called.");
         shutdownExecutor();

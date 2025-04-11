@@ -1,3 +1,4 @@
+/* ======== protocol.h ======== */
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
@@ -14,12 +15,12 @@ extern const char* CMD_ACCEPT_PREFIX;
 extern const char* CMD_REJECT_PREFIX;
 extern const char* CMD_MOVE_PREFIX;
 extern const char* CMD_QUIT;
-extern const char* CMD_REMATCH_YES;         // NUOVO
-extern const char* CMD_REMATCH_NO;          // NUOVO
+extern const char* CMD_REMATCH_YES;
+extern const char* CMD_REMATCH_NO;
 
 // Comandi Server -> Client
 extern const char* CMD_GET_NAME;
-extern const char* CMD_REMATCH_OFFER;       // NUOVO
+extern const char* CMD_REMATCH_OFFER;
 
 // Risposte Server -> Client (RESP:)
 extern const char* RESP_NAME_OK;
@@ -30,17 +31,18 @@ extern const char* RESP_JOIN_ACCEPTED_FMT; // game_id, symbol, opponent_name
 extern const char* RESP_REJECT_OK_FMT;     // rejected_name
 extern const char* RESP_JOIN_REJECTED_FMT; // game_id, creator_name
 extern const char* RESP_QUIT_OK;
-extern const char* RESP_REMATCH_ACCEPTED_FMT; // NUOVO - game_id
-extern const char* RESP_REMATCH_DECLINED;     // NUOVO
+extern const char* RESP_REMATCH_ACCEPTED_FMT;
+extern const char* RESP_REMATCH_DECLINED;
 
 // Notifiche Server -> Client (NOTIFY:)
 extern const char* NOTIFY_JOIN_REQUEST_FMT;     // joiner_name
 extern const char* NOTIFY_GAME_START_FMT;       // game_id, symbol, opponent_name
 extern const char* NOTIFY_REQUEST_CANCELLED_FMT;// joiner_name
-extern const char* NOTIFY_OPPONENT_ACCEPTED_REMATCH; // NUOVO
-extern const char* NOTIFY_OPPONENT_DECLINED;      // NUOVO
+extern const char* NOTIFY_OPPONENT_ACCEPTED_REMATCH;
+extern const char* NOTIFY_OPPONENT_DECLINED;
 
 // Errori Server -> Client (ERROR:) - Dichiarati qui, definiti in protocol.c
+extern const char* ERR_NAME_TAKEN; // <<< NUOVO ERRORE
 extern const char* ERR_SERVER_FULL_GAMES;
 extern const char* ERR_SERVER_FULL_SLOTS;
 extern const char* ERR_INVALID_MOVE_FORMAT;
@@ -63,6 +65,10 @@ extern const char* ERR_NOT_PLAYING;
 extern const char* ERR_UNKNOWN_COMMAND_FMT;
 extern const char* ERR_NOT_FINISHED_GAME;
 extern const char* ERR_NOT_THE_WINNER;
+extern const char* ERR_NOT_IN_FINISHED_OR_DRAW_GAME;
+extern const char* ERR_INVALID_REMATCH_CHOICE;
+extern const char* ERR_DRAW_REMATCH_ONLY_PLAYER;
+extern const char* ERR_GENERIC;
 // N.B. RESP_ERROR_PREFIX è definito e usato solo in game_logic.c e non serve dichiararlo extern qui
 
 

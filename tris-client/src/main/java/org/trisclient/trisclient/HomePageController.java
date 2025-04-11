@@ -50,74 +50,53 @@ public class HomePageController implements Initializable, NetworkService.ServerL
         return LocalDateTime.now().format(TIMESTAMP_FORMATTER);
     }
 
-    /**
-     * Metodo Initialize aggiornato: chiamato ogni volta che HomePage viene caricata.
-     * Deve decidere se riutilizzare NetworkService esistente o crearne uno nuovo.
-     */
     @Override
     public void initialize(URL url, ResourceBundle resourceBundle) {
         System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): initialize CALLED. LastReturnReason: " + lastReturnReason);
-        // Resetta stati specifici dell'istanza del controller
         cachedBoardDuringNavigation = null;
         cachedTurnDuringNavigation.set(false);
         isNavigatingToGame.set(false);
 
-        String returnReason = lastReturnReason; // Legge e "consuma" la ragione del ritorno
+        String returnReason = lastReturnReason;
         lastReturnReason = null;
 
         Platform.runLater(() -> {
             System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): initialize (runLater) START. Consumed ReturnReason: " + returnReason);
-            // Ottieni riferimento allo Stage il prima possibile
             if (currentStage == null && (flowPanePartite != null && flowPanePartite.getScene() != null)) {
                 currentStage = (Stage) flowPanePartite.getScene().getWindow();
             } else if(currentStage == null) {
-                currentStage = getCurrentStageFallback(); // Tentativo di fallback
+                currentStage = getCurrentStageFallback();
             }
 
-            // --- LOGICA CHIAVE ---
             if (networkServiceInstance != null && networkServiceInstance.isConnected()) {
-                // CASO 1: NetworkService esiste ed è connesso -> Stiamo tornando da GameController
                 System.out.println(getCurrentTimestamp() + " - Initializing: Reusing existing connected NetworkService instance.");
-                prepareForReturn(returnReason); // Chiama prepareForReturn per agganciare questo listener e aggiornare l'UI
+                prepareForReturn(returnReason);
             } else {
-                // CASO 2: NetworkService è null o disconnesso -> Prima esecuzione o errore precedente
                 System.out.println(getCurrentTimestamp() + " - Initializing: NetworkService is null or disconnected. Needs new connection.");
-                // Pulisce eventuali risorse residue se l'istanza esisteva ma era disconnessa
                 if (networkServiceInstance != null) {
                     System.out.println(getCurrentTimestamp()+" - Initializing: Cleaning up disconnected NetworkService.");
                     networkServiceInstance.cleanupExecutor();
                 }
-                networkServiceInstance = null; // Assicura che sia null prima di chiedere il nome
+                networkServiceInstance = null;
 
-                // Prepara UI per nuova connessione
                 labelStatus.setText("Enter name to connect.");
-                setButtonsDisabled(true); // Disabilita tutto
+                setButtonsDisabled(true);
                 if (flowPanePartite != null) flowPanePartite.getChildren().clear();
 
-                // Chiedi il nome e crea una nuova istanza di NetworkService
-                askForNameAndConnect();
+                askForNameAndConnect(); // MODIFICATO: Non passa il listener qui
             }
-            // --- FINE LOGICA CHIAVE ---
-
             System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): initialize (runLater) END");
         });
     }
 
-    /**
-     * Prepara l'HomePage quando si ritorna da GameController con una connessione attiva.
-     * Aggancia questo controller come listener e richiede un refresh della lista partite.
-     * @param statusMessage Messaggio ricevuto dal GameController (motivo del ritorno).
-     */
     private void prepareForReturn(String statusMessage) {
         System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): prepareForReturn CALLED with status: " + statusMessage);
         if (networkServiceInstance == null || !networkServiceInstance.isConnected()) {
             System.err.println(getCurrentTimestamp()+" - ERROR in prepareForReturn: NetworkService invalid!");
-            // Gestione errore - forse tornare ad askForNameAndConnect
             Platform.runLater(() -> {
                 labelStatus.setText("Error: Connection lost.");
                 setButtonsDisabled(true);
                 if (flowPanePartite != null) flowPanePartite.getChildren().clear();
-                // askForNameAndConnect(); // Potrebbe causare loop se la connessione fallisce ripetutamente
             });
             return;
         }
@@ -129,19 +108,17 @@ public class HomePageController implements Initializable, NetworkService.ServerL
         System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): Setting listener to THIS instance.");
         networkServiceInstance.setServerListener(this);
 
-        // --- LOGICA MODIFICATA ---
         final boolean rematchAccepted = (statusMessage != null && statusMessage.contains("Rematch accepted"));
 
         Platform.runLater(() -> {
-            // Imposta messaggio di status iniziale
             String initialStatus;
             if (rematchAccepted) {
-                initialStatus = "Waiting for new opponent..."; // Messaggio specifico
+                initialStatus = "Waiting for new opponent...";
             } else if (statusMessage != null && !statusMessage.trim().isEmpty()) {
-                // Usa la logica precedente per altri messaggi di ritorno
                 if (statusMessage.contains("Game Over") || statusMessage.contains("Opponent left") ||
-                        statusMessage.contains("Rematch declined") || statusMessage.contains("Opponent decided")) {
-                    initialStatus = "Last game finished. " + (staticPlayerName != null ? " Welcome back, " + staticPlayerName + "!" : "");
+                        statusMessage.contains("Rematch declined") || statusMessage.contains("Opponent decided") ||
+                        statusMessage.contains("Name already taken") || statusMessage.contains("Lost game")) { // Aggiunti casi ritorno
+                    initialStatus = "Last attempt finished. " + (staticPlayerName != null ? " Welcome back, " + staticPlayerName + "!" : "");
                 } else if ("VOLUNTARY_LEAVE".equals(statusMessage) || statusMessage.contains("LEFT_")) {
                     initialStatus = "Returned to Lobby." + (staticPlayerName != null ? " Welcome back, " + staticPlayerName + "!" : "");
                 } else {
@@ -154,78 +131,107 @@ public class HomePageController implements Initializable, NetworkService.ServerL
 
 
             if (rematchAccepted) {
-                // CASO SPECIALE: Vincitore accetta rematch -> È in stato WAITING
                 System.out.println(getCurrentTimestamp()+" - HomePageController: Rematch accepted case in prepareForReturn.");
-                // Aggiorna subito l'UI per lo stato WAITING
-                setButtonsDisabled(true); // Disabilita Crea e Refresh (già fatto, ma per sicurezza)
+                setButtonsDisabled(true);
                 if(buttonCreaPartita != null) buttonCreaPartita.setDisable(true);
-                if(buttonRefresh != null) buttonRefresh.setDisable(true); // Anche refresh è inutile qui
-                if (flowPanePartite != null) flowPanePartite.getChildren().clear(); // Pulisci lista (non dovrebbe esserci nulla di rilevante)
-                // Aggiungi messaggio "Sei in attesa" se non c'è lista
+                if(buttonRefresh != null) buttonRefresh.setDisable(true);
+                if (flowPanePartite != null) flowPanePartite.getChildren().clear();
                 Label waitingLabel = new Label("You are waiting for an opponent in your game.");
-                // TODO: Dovremmo avere l'ID della partita qui? Potremmo passarlo nel messaggio da GameController
                 if (flowPanePartite != null) flowPanePartite.getChildren().add(waitingLabel);
-                // *** NON INVIARE LIST ***
                 System.out.println(getCurrentTimestamp()+" - HomePageController: Skipping LIST request because player is WAITING.");
 
             } else {
-                // CASO NORMALE: Giocatore torna in LOBBY -> Invia LIST
                 System.out.println(getCurrentTimestamp()+" - HomePageController: Normal return case in prepareForReturn.");
-                // Disabilita temporaneamente i bottoni, onGamesList li riabiliterà
                 setButtonsDisabled(true);
                 if (flowPanePartite != null) flowPanePartite.getChildren().clear();
-                // Richiedi la lista giochi aggiornata
                 System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): prepareForReturn: Requesting game list.");
                 networkServiceInstance.sendListRequest();
             }
         });
-        // --- FINE LOGICA MODIFICATA ---
     }
 
-
+    // --- askForNameAndConnect AGGIORNATO ---
     /**
-     * Chiede il nome all'utente e avvia la connessione.
-     * Crea una nuova istanza di NetworkService se networkServiceInstance è null.
+     * Chiede il nome all'utente (la prima volta o dopo errore) e avvia la connessione.
+     * Gestisce la logica del dialogo iniziale.
      */
     private void askForNameAndConnect() {
         System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): askForNameAndConnect CALLED");
 
         Platform.runLater(() -> {
-            // Crea NetworkService solo se non esiste (initialize dovrebbe aver già pulito se necessario)
+            // Assicura che networkService esista
             if (networkServiceInstance == null) {
-                System.out.println(getCurrentTimestamp()+" - askForNameAndConnect: Creating new NetworkService instance because it was null.");
+                System.out.println(getCurrentTimestamp()+" - askForNameAndConnect: Creating new NetworkService instance (was null).");
                 networkServiceInstance = new NetworkService();
+            } else if (networkServiceInstance.isConnected()){
+                System.out.println(getCurrentTimestamp()+" - askForNameAndConnect: Already connected, skipping connection. Name required only.");
+                // Se già connesso ma serve un nome (dopo errore), chiama direttamente showNameDialog
+                showNameDialogAndSend(null); // Passa null per usare il nome attuale o prompt vuoto
+                return; // Esce per non riconnettere
             }
 
-            // Mostra dialogo per il nome
-            TextInputDialog dialog = new TextInputDialog(staticPlayerName != null ? staticPlayerName : "Giocatore"); // Precompila se esiste
-            dialog.setTitle("Nome Giocatore");
-            dialog.setHeaderText("Inserisci il tuo nome per connetterti:");
+            // Prepara UI per nuova connessione o attesa nome
+            labelStatus.setText("Enter name to connect:");
+            setButtonsDisabled(true);
+            if (flowPanePartite != null) flowPanePartite.getChildren().clear();
+
+            // Avvia la connessione SE NON GIÀ CONNESSO
+            // La connessione userà 'this' come listener TEMPORANEO fino al cambio scena
+            System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): Connecting using THIS as INITIAL listener.");
+            networkServiceInstance.connect("127.0.0.1", 12345, this); // Connessione vera e propria
+            // La richiesta del nome verrà dal server tramite onNameRequested
+            // Il dialogo iniziale per il nome è gestito ora da onNameRequested e onNameRejected
+        });
+    }
+
+    // --- NUOVO: showNameDialogAndSend ---
+    /**
+     * Mostra il dialogo per inserire il nome, con header e precompilazione opzionali.
+     * Invia il comando NAME al server se l'utente inserisce un nome valido.
+     * @param headerText Testo opzionale per l'header (es. messaggio di errore).
+     */
+    private void showNameDialogAndSend(String headerText) {
+        System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): showNameDialogAndSend CALLED. Header: " + headerText);
+        Platform.runLater(() -> {
+            // Usa networkServiceInstance per la logica interna
+            if (networkServiceInstance == null) {
+                System.err.println("showNameDialogAndSend: Cannot show dialog, networkService is null.");
+                askForNameAndConnect(); // Tenta recupero
+                return;
+            }
+
+            TextInputDialog dialog = new TextInputDialog(staticPlayerName != null ? staticPlayerName : ""); // Usa nome statico o vuoto
+            dialog.setTitle("Inserisci Nome Giocatore");
+            dialog.setHeaderText(headerText != null ? headerText : "Inserisci il tuo nome per iniziare:"); // Header personalizzato
             dialog.setContentText("Nome:");
             Stage owner = getCurrentStage();
-            if(owner != null) dialog.initOwner(owner);
+            if (owner != null) dialog.initOwner(owner);
 
             Optional<String> result = dialog.showAndWait();
             result.ifPresentOrElse(name -> {
-                if (name.trim().isEmpty()) {
-                    showError("Nome non valido", "Il nome non può essere vuoto.");
-                    askForNameAndConnect(); // Chiedi di nuovo
+                String trimmedName = name.trim();
+                if (trimmedName.isEmpty()) {
+                    // Nome vuoto: mostra di nuovo il dialogo con un messaggio di errore
+                    showNameDialogAndSend("Attenzione, il nome non può essere vuoto. Inseriscine uno valido:");
                 } else {
-                    // Salva il nome staticamente
-                    staticPlayerName = name.trim();
-                    labelStatus.setText("Connecting as " + staticPlayerName + "...");
-                    System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): Connecting with initial listener THIS instance.");
-                    setButtonsDisabled(true);
-
-                    // Avvia la connessione usando l'istanza (che ora esiste sicuramente)
-                    networkServiceInstance.connect("127.0.0.1", 12345, this);
+                    // Nome valido inserito: aggiorna staticPlayerName e invia
+                    staticPlayerName = trimmedName;
+                    labelStatus.setText("Sending name '" + staticPlayerName + "'...");
+                    System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): Sending name: " + staticPlayerName);
+                    networkServiceInstance.sendName(staticPlayerName);
                 }
-            }, () -> { // L'utente ha annullato
-                labelStatus.setText("Connection cancelled.");
-                setButtonsDisabled(true); // Rimane disabilitato
+            }, () -> {
+                // L'utente ha annullato il dialogo
+                labelStatus.setText("Name entry cancelled. Disconnecting.");
+                System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): User cancelled name dialog. Disconnecting.");
+                if(networkServiceInstance != null && networkServiceInstance.isConnected()) {
+                    networkServiceInstance.disconnect(); // Disconnetti se annulla
+                }
+                setButtonsDisabled(true); // Blocca UI
             });
         });
     }
+
 
     // --- Gestori Eventi UI ---
 
@@ -234,7 +240,7 @@ public class HomePageController implements Initializable, NetworkService.ServerL
         System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): handleCreaPartita CALLED");
         if (networkServiceInstance == null || !networkServiceInstance.isConnected()) {
             System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): Not connected. Triggering connection process...");
-            askForNameAndConnect();
+            askForNameAndConnect(); // Tenta di riconnettere
             return;
         }
         setButtonsDisabled(true);
@@ -255,6 +261,8 @@ public class HomePageController implements Initializable, NetworkService.ServerL
             System.err.println(getCurrentTimestamp() + " - HomePageController (" + this.hashCode() + "): Cannot refresh, not connected.");
             labelStatus.setText("Not connected. Cannot refresh.");
             setButtonsDisabled(true);
+            // Potremmo provare a riconnettere? O mostrare bottone 'Connetti'?
+            // askForNameAndConnect(); // Forse troppo aggressivo
         }
     }
 
@@ -265,60 +273,70 @@ public class HomePageController implements Initializable, NetworkService.ServerL
         System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onConnected");
         Platform.runLater(() -> {
             labelStatus.setText("Connected. Waiting for server name request...");
-            setButtonsDisabled(true); // Bottoni disabilitati finché nome non accettato
+            setButtonsDisabled(true);
         });
     }
 
     @Override
     public void onNameRequested() {
         System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onNameRequested");
-        if (staticPlayerName == null || staticPlayerName.trim().isEmpty()) {
-            System.err.println(getCurrentTimestamp() + " - GUI ERROR: Server requested name, but staticPlayerName is invalid! Re-asking.");
-            Platform.runLater(this::askForNameAndConnect); // Riprova a chiedere nome
-            return;
-        }
-        Platform.runLater(() -> labelStatus.setText("Sending name '" + staticPlayerName + "'..."));
-        networkServiceInstance.sendName(staticPlayerName);
+        // Adesso, invece di inviare subito il nome (che potrebbe non esserci), mostriamo il dialogo.
+        Platform.runLater(() -> {
+            showNameDialogAndSend(null); // Mostra il dialogo iniziale per il nome
+        });
     }
+
+
+    // --- NUOVO: onNameRejected ---
+    @Override
+    public void onNameRejected(String reason) {
+        System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onNameRejected. Reason: " + reason);
+        Platform.runLater(() -> {
+            // Mostra di nuovo il dialogo per chiedere un nome diverso
+            showNameDialogAndSend("Attenzione, nome già esistente inseriscine un altro");
+        });
+    }
+    // --- FINE NUOVO ---
+
 
     @Override
     public void onNameAccepted() {
         System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onNameAccepted");
         Platform.runLater(() -> {
             labelStatus.setText("Logged in as " + staticPlayerName + ". Requesting game list...");
-            // Ancora non abilito bottoni, aspetto onGamesList per sapere lo stato
-            setButtonsDisabled(true);
+            setButtonsDisabled(true); // Attende lista giochi
         });
-        networkServiceInstance.sendListRequest(); // Richiedi lista dopo autenticazione
+        // Solo DOPO che il nome è accettato, chiediamo la lista
+        networkServiceInstance.sendListRequest();
     }
 
     @Override
     public void onDisconnected(String reason) {
         System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onDisconnected. Reason: " + reason);
-        lastReturnReason = reason; // Salva motivo per futuro initialize
+        lastReturnReason = reason;
 
         Platform.runLater(() -> {
             labelStatus.setText("Disconnected: " + reason);
-            setButtonsDisabled(true); // Tutto disabilitato
-            if (flowPanePartite != null) flowPanePartite.getChildren().clear(); // Pulisci lista partite
+            setButtonsDisabled(true);
+            if (flowPanePartite != null) flowPanePartite.getChildren().clear();
             System.out.println(getCurrentTimestamp() + " - GUI: Disconnected state UI updated.");
 
-            // Mostra alert solo per disconnessioni inattese
             boolean voluntaryDisconnect = "VOLUNTARY_LEAVE".equals(reason)
                     || "Disconnected by client".equals(reason)
                     || reason.contains("Rematch")
-                    || reason.contains("Opponent decided");
+                    || reason.contains("Opponent decided")
+                    || reason.contains("Name entry cancelled"); // Aggiunto motivo per cui disconnettiamo
             if (!voluntaryDisconnect && !reason.contains("Server is shutting down")) {
                 showError("Disconnected", "Unexpected connection loss: " + reason);
             }
+
+            // POTREMMO AGGIUNGERE QUI UN BOTTONE "RICONNETTI"
+            // if(buttonReconnect != null) buttonReconnect.setVisible(true);
+
         });
     }
 
-    /**
-     * Aggiorna l'interfaccia mostrando la lista delle partite ricevute.
-     * Gestisce anche lo stato dei bottoni principali (Crea, Refresh) in base
-     * al fatto che l'utente sia connesso e/o già in attesa di una partita.
-     */
+
     @Override
     public void onGamesList(List<NetworkService.GameInfo> games) {
         System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onGamesList with " + games.size() + " games.");
@@ -330,39 +348,31 @@ public class HomePageController implements Initializable, NetworkService.ServerL
             }
 
             boolean amIWaiting = false;
-            int myWaitingGameId = -1; // Se servisse l'ID per lo status label
+            int myWaitingGameId = -1;
 
             flowPanePartite.getChildren().clear();
             int displayedGamesCount = 0;
 
-            if (games != null) { // Aggiunto check null per sicurezza
+            if (games != null) {
                 for (NetworkService.GameInfo gameInfo : games) {
-                    if (gameInfo == null) continue; // Salta eventuali entry nulle
+                    if (gameInfo == null) continue;
 
-                    // --- CONTROLLO MODIFICATO ---
-                    // Controlla se è la partita di QUESTO utente ed è in stato WAITING
                     boolean isMyWaitingGame = staticPlayerName != null &&
                             staticPlayerName.equals(gameInfo.creatorName) &&
                             "Waiting".equalsIgnoreCase(gameInfo.state);
 
                     if (isMyWaitingGame) {
-                        // È la mia partita in attesa, segno che sto aspettando ma non la mostro
                         amIWaiting = true;
                         myWaitingGameId = gameInfo.id;
                         System.out.println("onGamesList: Player '" + staticPlayerName + "' is WAITING in game " + gameInfo.id + ". Skipping display.");
-                        continue; // Non aggiungere questa partita alla lista visualizzata
+                        continue;
                     }
-                    // --- FINE CONTROLLO ---
 
-                    // Se non è la mia partita in attesa, la visualizzo
                     try {
                         FXMLLoader loader = new FXMLLoader(getClass().getResource("/org/trisclient/trisclient/partita-item-view.fxml"));
                         Node gameItemNode = loader.load();
                         PartitaItemController controller = loader.getController();
-
-                        // Passa anche staticPlayerName per disabilitare il join della propria partita in altri stati (sicurezza)
                         controller.setData(gameInfo.id, gameInfo.creatorName, gameInfo.state, staticPlayerName);
-
                         flowPanePartite.getChildren().add(gameItemNode);
                         displayedGamesCount++;
                     } catch (Exception e) {
@@ -372,29 +382,25 @@ public class HomePageController implements Initializable, NetworkService.ServerL
                 }
             }
 
-            // Aggiungi messaggio se non ci sono partite *visualizzate*
             if (displayedGamesCount == 0 && !amIWaiting) {
-                // Check aggiunto !amIWaiting per non mostrare "No games" se stiamo aspettando
                 flowPanePartite.getChildren().add(new Label("No other games available."));
             }
 
-            // Aggiorna lo stato generale dell'UI e dei bottoni
             boolean isConnected = (networkServiceInstance != null && networkServiceInstance.isConnected());
             if(isConnected){
-                if(buttonRefresh != null) buttonRefresh.setDisable(false); // Refresh sempre abilitato se connesso
+                if(buttonRefresh != null) buttonRefresh.setDisable(false);
 
                 if (amIWaiting) {
-                    if(buttonCreaPartita != null) buttonCreaPartita.setDisable(true); // Disabilita "Crea" se sto aspettando
+                    if(buttonCreaPartita != null) buttonCreaPartita.setDisable(true);
                     labelStatus.setText("Waiting for opponent in your game " + (myWaitingGameId > 0 ? myWaitingGameId : "") + "...");
                 } else {
-                    if(buttonCreaPartita != null) buttonCreaPartita.setDisable(false); // Abilita "Crea" se non sto aspettando
-                    // Mantieni status se arriva da un ritorno, altrimenti aggiorna con numero partite
-                    if (labelStatus.getText() == null || labelStatus.getText().isEmpty() || (!labelStatus.getText().contains("Last game finished") && !labelStatus.getText().contains("Returned to Lobby"))) {
-                        labelStatus.setText("Logged in as " + staticPlayerName + ". Available games to join: " + displayedGamesCount);
+                    if(buttonCreaPartita != null) buttonCreaPartita.setDisable(false);
+                    // Aggiorna status solo se rilevante per la lista
+                    if (labelStatus.getText() == null || !labelStatus.getText().startsWith("Logged in")) {
+                        labelStatus.setText("Logged in as " + staticPlayerName + ". Available games: " + displayedGamesCount);
                     }
                 }
             } else {
-                // Non connesso
                 if(buttonCreaPartita != null) buttonCreaPartita.setDisable(true);
                 if(buttonRefresh != null) buttonRefresh.setDisable(true);
                 if(labelStatus!=null && !labelStatus.getText().startsWith("Disconnected")) labelStatus.setText("Disconnected.");
@@ -408,11 +414,13 @@ public class HomePageController implements Initializable, NetworkService.ServerL
         System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onGameCreated for game " + gameId);
         Platform.runLater(() -> {
             labelStatus.setText("Game " + gameId + " created. Waiting for opponent...");
-            setButtonsDisabled(true); // Disabilita temporaneamente
+            // Qui potremmo evitare di disabilitare tutto e solo aggiornare
+            // la lista giochi (magari con un messaggio specifico)
+            setButtonsDisabled(true); // Per ora manteniamo il comportamento vecchio
             disableJoinButtons();
-            // onGamesList verrà chiamata dal server o da un refresh per mostrare la nuova partita
-            // Potremmo forzare un refresh per aggiornare subito, ma potrebbe essere ridondante
-            // handleRefresh();
+            // Il server dovrebbe inviare un LIST aggiornato? O aspettiamo refresh?
+            // Chiediamo un refresh per mostrare subito lo stato di attesa
+            handleRefresh();
         });
     }
 
@@ -421,7 +429,7 @@ public class HomePageController implements Initializable, NetworkService.ServerL
         System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onJoinRequestSent for game " + gameId);
         Platform.runLater(() -> {
             labelStatus.setText("Request sent for game " + gameId + ". Waiting for approval...");
-            setButtonsDisabled(true); // Disabilita azioni mentre aspetta risposta
+            setButtonsDisabled(true);
             disableJoinButtons();
         });
     }
@@ -443,7 +451,7 @@ public class HomePageController implements Initializable, NetworkService.ServerL
             if (owner != null) alert.initOwner(owner);
 
             Optional<ButtonType> result = alert.showAndWait();
-            String decision = "Reject"; // Default a rifiuto
+            String decision = "Reject";
             if (result.isPresent() && result.get() == buttonTypeAccept) {
                 decision = "Accept";
             }
@@ -458,8 +466,8 @@ public class HomePageController implements Initializable, NetworkService.ServerL
         System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onJoinAccepted for game " + gameId + ".");
         Platform.runLater(() -> {
             labelStatus.setText("Join request ACCEPTED! Starting game " + gameId + "...");
-            // Navigazione avviene su onGameStart
         });
+        // Navigazione spostata in onGameStart
     }
 
     @Override
@@ -468,10 +476,9 @@ public class HomePageController implements Initializable, NetworkService.ServerL
         Platform.runLater(() -> {
             showError("Join Rejected", "Request to join game " + gameId + " rejected by " + creatorName + ".");
             labelStatus.setText("Join request for game " + gameId + " rejected.");
-            // Riabilita UI e aggiorna lista
             boolean isConnected = (networkServiceInstance != null && networkServiceInstance.isConnected());
-            setButtonsDisabled(!isConnected); // Abilita in base alla connessione
-            handleRefresh(); // Aggiorna lista
+            setButtonsDisabled(!isConnected);
+            handleRefresh();
         });
     }
 
@@ -480,69 +487,30 @@ public class HomePageController implements Initializable, NetworkService.ServerL
         System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onActionConfirmed: " + message);
         Platform.runLater(() -> {
             if (message.startsWith("Rejected request from")) {
-                // Hai appena rifiutato qualcuno, ma SEI ANCORA IN ATTESA
-                labelStatus.setText(message + ". Waiting for other players...");
-                // Assicura che l'UI rifletta lo stato di attesa
-                setButtonsDisabled(true); // Mantiene Crea/Refresh disabilitati
-                // Aggiorna la lista *senza* mostrare la propria partita
-                if (flowPanePartite != null) {
-                    flowPanePartite.getChildren().clear();
-                    flowPanePartite.getChildren().add(new Label("Waiting for opponent..."));
-                }
-                // --- RIMOSSA CHIAMATA handleRefresh() ---
+                labelStatus.setText(message + ". Still waiting...");
+                setButtonsDisabled(true); // Rimane disabilitato se in attesa
+                handleRefresh(); // Aggiorna per pulire eventuale stato vecchio
                 System.out.println("onActionConfirmed: User rejected player, remaining in WAITING state.");
             }
-            // Aggiungere altri casi 'RESP:' se necessario
+            // Altri casi 'RESP:' ?
         });
     }
+
 
     @Override
     public void onGameStart(int gameId, char symbol, String opponentName) {
         System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onGameStart received for game " + gameId);
-        lastReturnReason = null; // Pulisci prima di navigare
+        lastReturnReason = null; // Pulisci motivo ritorno prima di navigare
         Platform.runLater(() -> labelStatus.setText("Game " + gameId + " starting..."));
-        isNavigatingToGame.set(true);
-        cachedBoardDuringNavigation = null;
-        cachedTurnDuringNavigation.set(false);
-        navigateToGameScreen(gameId, symbol, opponentName);
-    }
-
-    // --- Metodo per tornare alla Home (chiamato da GameController) ---
-    public void returnToHomePage(String statusMessage) {
-        System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): returnToHomePage CALLED with message: " + statusMessage);
-        lastReturnReason = statusMessage; // Salva motivo per la *nuova* istanza
-
-        Platform.runLater(() -> {
-            try {
-                System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): returnToHomePage (runLater) START for reason: " + lastReturnReason);
-                Stage stageToUse = getCurrentStage();
-                if (stageToUse == null) throw new IOException("Stage is NULL, cannot return to home!");
-
-                // Ricarica l'FXML della Home. Questo creerà una NUOVA istanza del controller.
-                FXMLLoader loader = new FXMLLoader(getClass().getResource("/org/trisclient/trisclient/home-page-view.fxml"));
-                Parent homeRoot = loader.load();
-                // La nuova istanza eseguirà il suo `initialize` leggendo `lastReturnReason`
-                System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): Loaded new home-page-view.fxml. New controller hash: "+loader.getController().hashCode());
-
-                Scene scene = stageToUse.getScene();
-                if (scene == null) { scene = new Scene(homeRoot); stageToUse.setScene(scene); }
-                else { scene.setRoot(homeRoot); } // Imposta la nuova root
-
-                stageToUse.setTitle("Tris - Lobby");
-                stageToUse.show();
-                System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): returnToHomePage (runLater) END. Stage is showing Home View.");
-
-            } catch (Exception e) {
-                System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): !!! CRITICAL EXCEPTION during returnToHomePage !!!");
-                e.printStackTrace();
-                showError("Critical UI Error", "Failed to return to Home Page.\n" + e.getMessage());
-                Platform.exit(); // Potrebbe essere necessario uscire se l'UI è compromessa
-            }
-        });
+        isNavigatingToGame.set(true); // <<< IMPOSTA FLAG DI NAVIGAZIONE
+        cachedBoardDuringNavigation = null; // Reset cache
+        cachedTurnDuringNavigation.set(false); // Reset cache
+        navigateToGameScreen(gameId, symbol, opponentName); // <<< NAVIGA
     }
 
 
-    // --- Metodi Listener che non dovrebbero essere chiamati qui ---
+    // --- Listener non chiamati qui ---
+    // Loggano se chiamati inaspettatamente o se messaggi arrivano durante la navigazione
     @Override public void onBoardUpdate(String[] board) { if (isNavigatingToGame.get()) cachedBoardDuringNavigation = board; else System.err.println(getCurrentTimestamp()+" - HomePage: !!! Unexpected onBoardUpdate !!! Board: "+Arrays.toString(board)); }
     @Override public void onYourTurn() { if (isNavigatingToGame.get()) cachedTurnDuringNavigation.set(true); else System.err.println(getCurrentTimestamp()+" - HomePage: !!! Unexpected onYourTurn !!!"); }
     @Override public void onGameOver(String result) { System.err.println(getCurrentTimestamp()+" - HomePage: !!! Unexpected onGameOver("+result+") !!!"); }
@@ -554,32 +522,72 @@ public class HomePageController implements Initializable, NetworkService.ServerL
     @Override public void onMessageReceived(String rawMessage) { System.err.println(getCurrentTimestamp() + " - HomePage: !!! Unexpected raw message: " + rawMessage + " !!!"); }
 
 
-    // --- Gestione Errori ---
+    // --- Gestione Errori Generici ---
     @Override
     public void onError(String message) {
         System.err.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onError: " + message + " | isNavigating="+isNavigatingToGame.get());
         Platform.runLater(() -> {
+            // Mostra sempre l'errore all'utente
             showError("Server Error", message);
 
+            // Se stavamo navigando, abortisci e ripristina
             if (isNavigatingToGame.compareAndSet(true, false)) {
-                // Errore durante il tentativo di andare alla schermata di gioco
                 System.err.println(getCurrentTimestamp() + " - HomePage: Error during game navigation. Aborting.");
                 if(labelStatus!=null) labelStatus.setText("Error starting game: " + message);
-            } else {
-                // Errore generico mentre si è in lobby
-                if(labelStatus != null) labelStatus.setText("Error: " + message);
+                boolean stillConnected = (networkServiceInstance != null && networkServiceInstance.isConnected());
+                setButtonsDisabled(!stillConnected);
+                if(stillConnected) handleRefresh();
+                return; // Esci, abbiamo gestito l'errore durante navigazione
             }
 
-            // Resetta stato UI
+            // Altrimenti, errore generico in Lobby
+            if(labelStatus != null) labelStatus.setText("Error: " + message);
+
+            // Se l'errore indica un problema grave (es. "full", "generic", "invalid state")
+            // potrebbe essere opportuno resettare/aggiornare lo stato.
             boolean stillConnected = (networkServiceInstance != null && networkServiceInstance.isConnected());
             setButtonsDisabled(!stillConnected);
-            if(stillConnected && !message.contains("Server is shutting down")){
+            // Prova a fare refresh SE connesso E l'errore non è di disconnessione imminente
+            if(stillConnected && !message.contains("Server is shutting down") && !message.contains("full")){
                 handleRefresh(); // Tenta refresh
             }
         });
     }
 
-    // --- Metodi Helper ---
+    // --- Metodo per tornare alla Home (chiamato da GameController) ---
+    public void returnToHomePage(String statusMessage) {
+        System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): returnToHomePage CALLED with message: " + statusMessage);
+        lastReturnReason = statusMessage; // Salva per la NUOVA istanza
+
+        Platform.runLater(() -> {
+            try {
+                System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): returnToHomePage (runLater) START for reason: " + lastReturnReason);
+                Stage stageToUse = getCurrentStage();
+                if (stageToUse == null) throw new IOException("Stage is NULL, cannot return to home!");
+
+                FXMLLoader loader = new FXMLLoader(getClass().getResource("/org/trisclient/trisclient/home-page-view.fxml"));
+                Parent homeRoot = loader.load();
+                // HomePageController newController = loader.getController(); // NON serve il controller qui
+                System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): Loaded new home-page-view.fxml. New controller hash: "+loader.getController().hashCode());
+
+                Scene scene = stageToUse.getScene();
+                if (scene == null) { scene = new Scene(homeRoot); stageToUse.setScene(scene); }
+                else { scene.setRoot(homeRoot); }
+
+                stageToUse.setTitle("Tris - Lobby");
+                stageToUse.show();
+                System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): returnToHomePage (runLater) END. Stage is showing Home View.");
+
+            } catch (Exception e) {
+                System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): !!! CRITICAL EXCEPTION during returnToHomePage !!!");
+                e.printStackTrace();
+                showError("Critical UI Error", "Failed to return to Home Page.\n" + e.getMessage());
+                Platform.exit();
+            }
+        });
+    }
+
+    // --- Metodi Helper UI (invariati) ---
 
     private void navigateToGameScreen(int gameId, char symbol, String opponentName) {
         System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): navigateToGameScreen CALLED for game " + gameId);
@@ -606,14 +614,13 @@ public class HomePageController implements Initializable, NetworkService.ServerL
                 stageToUse.setTitle("Tris - Game " + gameId + " vs " + opponentName);
                 stageToUse.show();
                 System.out.println(getCurrentTimestamp()+" - HomePage Nav: Stage showing Game View.");
-                isNavigatingToGame.set(false); // Flag navigazione OFF dopo successo
+                isNavigatingToGame.set(false);
 
             } catch (Exception e) {
                 System.err.println(getCurrentTimestamp()+" - HomePage Nav: !!! EXCEPTION navigating to game screen !!!");
                 e.printStackTrace();
                 showError("Critical UI Error", "Cannot load game screen.\n" + e.getMessage());
-                isNavigatingToGame.set(false); // Reset flag in caso di errore
-                // Tenta ripristino lobby UI
+                isNavigatingToGame.set(false);
                 setButtonsDisabled(!(networkServiceInstance != null && networkServiceInstance.isConnected()));
                 handleRefresh();
                 if(labelStatus != null) labelStatus.setText("Error loading game.");
@@ -641,22 +648,17 @@ public class HomePageController implements Initializable, NetworkService.ServerL
         });
     }
 
-    // Imposta stato disabilitato per i bottoni principali (Crea, Refresh)
-    // Verranno poi affinati da onGamesList in base allo stato del giocatore
     private void setButtonsDisabled(boolean disabled) {
         Platform.runLater(() -> {
             if (buttonCreaPartita != null) buttonCreaPartita.setDisable(disabled);
             if (buttonRefresh != null) buttonRefresh.setDisable(disabled);
-            if(disabled) disableJoinButtons(); // Se disabilito i principali, disabilito anche i join
+            if(disabled) disableJoinButtons();
         });
     }
 
-    // Ottiene lo stage corrente in modo più robusto
     private Stage getCurrentStage() {
         try {
             if (currentStage != null && currentStage.isShowing()) return currentStage;
-
-            // Tenta di ottenerlo da un componente visibile
             Node node = null;
             if(labelStatus != null && labelStatus.getScene() != null) node = labelStatus;
             else if (flowPanePartite != null && flowPanePartite.getScene() != null) node = flowPanePartite;
@@ -666,7 +668,6 @@ public class HomePageController implements Initializable, NetworkService.ServerL
                 currentStage = (Stage) node.getScene().getWindow();
                 if(currentStage.isShowing()) return currentStage;
             }
-            // Fallback estremo
             return getCurrentStageFallback();
         } catch (Exception e) {
             System.err.println("Exception getting current stage: " + e.getMessage());

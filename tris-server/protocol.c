@@ -1,3 +1,4 @@
+/* ======== protocol.c ======== */
 #include "protocol.h"
 #include "utils.h"
 #include "game_logic.h" // Necessario per init_board, find_opponent_fd, broadcast_game_state, ecc.
@@ -44,6 +45,7 @@ const char* NOTIFY_OPPONENT_DECLINED = "NOTIFY:OPPONENT_DECLINED Back to lobby.\
 // Nota: NOTIFY_BOARD_PREFIX, NOTIFY_YOUR_TURN, etc. sono in game_logic.c
 
 // Errori Server -> Client (ERROR:) - Definiti qui
+const char* ERR_NAME_TAKEN = "ERROR:NAME_TAKEN\n"; // <<< DEFINIZIONE NUOVO ERRORE
 const char* ERR_SERVER_FULL_GAMES = "ERROR:Server full, cannot create game (no game slots)\n";
 const char* ERR_SERVER_FULL_SLOTS = "ERROR:Server is full. Try again later.\n";
 const char* ERR_INVALID_MOVE_FORMAT = "ERROR:Invalid move format. Use: MOVE <row> <col>\n";
@@ -66,7 +68,6 @@ const char* ERR_NOT_PLAYING = "ERROR:Command only available in PLAYING or finish
 const char* ERR_UNKNOWN_COMMAND_FMT = "ERROR:Unknown command or invalid state (%d) for command: %s\n";
 const char* ERR_NOT_FINISHED_GAME = "ERROR:Command only available after game finished\n";
 const char* ERR_NOT_THE_WINNER = "ERROR:Only the winner can decide rematch\n";
-// Aggiunti anche:
 const char* ERR_NOT_IN_FINISHED_OR_DRAW_GAME = "ERROR:Rematch command invalid in current game state\n";
 const char* ERR_INVALID_REMATCH_CHOICE = "ERROR:Invalid rematch choice command\n";
 const char* ERR_DRAW_REMATCH_ONLY_PLAYER = "ERROR:Cannot rematch after draw if not a player in the game\n";
@@ -74,24 +75,75 @@ const char* ERR_GENERIC = "ERROR:An internal server error occurred.\n"; // Gener
 
 // --- Implementazioni Funzioni Processamento Comandi ---
 
+/**
+ * Processa il comando NAME inviato dal client.
+ * Verifica se il nome è già in uso prima di registrarlo.
+ */
 void process_name_command(int client_idx, const char* name_arg) {
     if (client_idx < 0 || client_idx >= MAX_TOTAL_CLIENTS || !name_arg) return;
+    int fd = -1;
+    ClientState current_state;
+    bool name_taken = false;
+
     pthread_mutex_lock(&client_list_mutex);
-    if (clients[client_idx].active && clients[client_idx].state == CLIENT_STATE_CONNECTED) {
-        strncpy(clients[client_idx].name, name_arg, MAX_NAME_LEN - 1);
+
+    // Controlla se il client è attivo e nello stato corretto
+    if (!clients[client_idx].active || clients[client_idx].state != CLIENT_STATE_CONNECTED) {
+        fd = clients[client_idx].active ? clients[client_idx].fd : -1;
+        current_state = clients[client_idx].active ? clients[client_idx].state : CLIENT_STATE_CONNECTED;
+        pthread_mutex_unlock(&client_list_mutex);
+        LOG("Client fd %d (idx %d) sent NAME in wrong state (%d) or inactive.\n", fd, client_idx, current_state);
+        // Potremmo inviare un errore qui, ma probabilmente non serve perché il client non dovrebbe arrivare qui
+        return;
+    }
+    fd = clients[client_idx].fd; // Ottieni l'fd sotto lock
+
+    // === BLOCCO NUOVO: Controllo nome duplicato ===
+    // Sanitizza/normalizza il nome se necessario (es. rimuovere spazi extra? Qui no)
+    char clean_name[MAX_NAME_LEN];
+    strncpy(clean_name, name_arg, MAX_NAME_LEN - 1);
+    clean_name[MAX_NAME_LEN - 1] = '\0';
+    clean_name[strcspn(clean_name, "\r\n ")] = 0; // Rimuovi eventuali spazi/newline alla fine
+
+    if(strlen(clean_name) == 0) { // Nome vuoto non permesso
+        pthread_mutex_unlock(&client_list_mutex);
+        LOG("Client fd %d (idx %d) attempted to register empty name.\n", fd, client_idx);
+        send_to_client(fd, "ERROR:Name cannot be empty.\n"); // Errore specifico (nuovo)
+        return;
+    }
+
+
+    for (int i = 0; i < MAX_TOTAL_CLIENTS; ++i) {
+        if (i != client_idx && clients[i].active && clients[i].name[0] != '\0') {
+            // Compara senza case-sensitivity se vuoi (usa strcasecmp)
+            if (strcmp(clients[i].name, clean_name) == 0) {
+                name_taken = true;
+                break;
+            }
+        }
+    }
+    // === FINE BLOCCO NUOVO ===
+
+    if (name_taken) {
+        pthread_mutex_unlock(&client_list_mutex);
+        LOG("Client fd %d (idx %d) attempted duplicate name: %s\n", fd, client_idx, clean_name);
+        send_to_client(fd, ERR_NAME_TAKEN); // Invia l'errore specifico
+    } else {
+        // Nome OK: registra il client
+        strncpy(clients[client_idx].name, clean_name, MAX_NAME_LEN - 1);
         clients[client_idx].name[MAX_NAME_LEN - 1] = '\0';
         clients[client_idx].state = CLIENT_STATE_LOBBY;
-        int fd = clients[client_idx].fd;
         LOG("Client fd %d (idx %d) registered name: %s\n", fd, client_idx, clients[client_idx].name);
+
         pthread_mutex_unlock(&client_list_mutex);
-        send_to_client(fd, RESP_NAME_OK);
-    } else {
-        int fd = clients[client_idx].active ? clients[client_idx].fd : -1;
-        ClientState state = clients[client_idx].active ? clients[client_idx].state : CLIENT_STATE_CONNECTED; // Default state if inactive
-        pthread_mutex_unlock(&client_list_mutex);
-        LOG("Client fd %d (idx %d) sent NAME in wrong state (%d) or inactive.\n", fd, client_idx, state);
+        send_to_client(fd, RESP_NAME_OK); // Conferma nome ok
     }
 }
+
+
+// ... TUTTE LE ALTRE FUNZIONI DI PROTOCOL.C RIMANGONO INVARIATE ...
+// (process_list_command, process_create_command, ...)
+// (... fino alla fine del file ...)
 
 void process_list_command(int client_idx) {
      if (client_idx < 0 || client_idx >= MAX_TOTAL_CLIENTS) return;
@@ -137,7 +189,6 @@ void process_create_command(int client_idx) {
     int game_idx = -1;
     int created_game_id = -1;
     int client_fd = -1;
-    // bool success = false; // --- VARIABILE RIMOSSA ---
     pthread_mutex_lock(&client_list_mutex);
     pthread_mutex_lock(&game_list_mutex);
     if (!clients[client_idx].active || clients[client_idx].state != CLIENT_STATE_LOBBY) {
@@ -169,7 +220,6 @@ void process_create_command(int client_idx) {
         clients[client_idx].state = CLIENT_STATE_WAITING;
         clients[client_idx].game_id = created_game_id;
         snprintf(response, sizeof(response), RESP_CREATED_FMT, created_game_id);
-        // success = true; // --- ASSEGNAZIONE RIMOSSA ---
         LOG("Game %d created by %s (fd %d) in slot %d.\n", created_game_id, games[game_idx].player1_name, client_fd, game_idx);
     } else {
         snprintf(response, sizeof(response), "%s\n", ERR_SERVER_FULL_GAMES);
@@ -312,7 +362,7 @@ void process_move_command(int client_idx, const char* move_args) {
     char game_over_status_self[20] = {0}; char game_over_status_opponent[20] = {0};
     int winner_fd_if_game_over = -1;
     int opponent_fd_if_game_over = -1;
-    int opponent_idx_if_game_over = -1; // **NUOVO: Indice dell'avversario**
+    int opponent_idx_if_game_over = -1;
     char client_name[MAX_NAME_LEN] = {0};
 
     if (sscanf(move_args, "%d %d", &r, &c) != 2) {
@@ -325,7 +375,6 @@ void process_move_command(int client_idx, const char* move_args) {
 
     pthread_mutex_lock(&client_list_mutex); pthread_mutex_lock(&game_list_mutex);
 
-    // Controlli sullo stato del client e della partita (come prima)
     if (!clients[client_idx].active) { goto move_cleanup; }
      player_fd = clients[client_idx].fd;
      strncpy(client_name, clients[client_idx].name, MAX_NAME_LEN-1);
@@ -343,7 +392,6 @@ void process_move_command(int client_idx, const char* move_args) {
     game_idx = find_game_index_unsafe(current_game_id);
     if (game_idx == -1) {
         snprintf(response, sizeof(response), "%s %d\n", ERR_GAME_NOT_FOUND, current_game_id);
-        // Mettere il client in LOBBY se il suo game_id punta a un gioco inesistente
         clients[client_idx].state = CLIENT_STATE_LOBBY; clients[client_idx].game_id = 0;
         goto move_cleanup;
      }
@@ -366,22 +414,19 @@ void process_move_command(int client_idx, const char* move_args) {
         goto move_cleanup;
     }
 
-    // --- Mossa valida, aggiorna stato ---
     Cell player_symbol = (player_fd == game->player1_fd) ? CELL_X : CELL_O;
     game->board[r][c] = player_symbol;
     LOG("Player '%s' (fd %d, %c) moved to %d,%d in game %d.\n", client_name, player_fd, (player_symbol==CELL_X ? 'X':'O'), r, c, current_game_id);
     move_made = true;
     opponent_fd_if_game_over = find_opponent_fd(game, player_fd);
-    opponent_idx_if_game_over = find_client_index_unsafe(opponent_fd_if_game_over); // **NUOVO: Trova indice avversario**
+    opponent_idx_if_game_over = find_client_index_unsafe(opponent_fd_if_game_over);
 
-    // Controlla vittoria / pareggio
     if (check_winner(game->board, player_symbol)) {
         game_over = true; game->state = GAME_STATE_FINISHED; game->current_turn_fd = -1;
         game->winner_fd = player_fd; winner_fd_if_game_over = player_fd;
         strcpy(game_over_status_self, "WIN"); strcpy(game_over_status_opponent, "LOSE");
         LOG("Game %d over. Winner: '%s' (fd %d).\n", current_game_id, client_name, player_fd);
 
-        // **MODIFICA**: Se l'avversario (perdente) è ancora valido, mettilo in LOBBY sul server
         if (opponent_idx_if_game_over != -1 && clients[opponent_idx_if_game_over].active) {
              LOG("Setting loser '%s' (fd %d, idx %d) state to LOBBY on server.\n",
                   clients[opponent_idx_if_game_over].name, opponent_fd_if_game_over, opponent_idx_if_game_over);
@@ -391,22 +436,18 @@ void process_move_command(int client_idx, const char* move_args) {
 
     } else if (board_full(game->board)) {
         game_over = true; game->state = GAME_STATE_FINISHED; game->current_turn_fd = -1;
-        game->winner_fd = -1; winner_fd_if_game_over = -1; // Pareggio
+        game->winner_fd = -1; winner_fd_if_game_over = -1;
         strcpy(game_over_status_self, "DRAW"); strcpy(game_over_status_opponent, "DRAW");
         LOG("Game %d over. Result: DRAW.\n", current_game_id);
     } else {
         game->current_turn_fd = opponent_fd_if_game_over;
-        // LOG("Game %d: Turn passed to opponent (fd %d).\n", current_game_id, opponent_fd_if_game_over); // Meno log verboso
     }
 
 move_cleanup:
-    // Rilascia i lock PRIMA di inviare i messaggi
     pthread_mutex_unlock(&game_list_mutex);
     pthread_mutex_unlock(&client_list_mutex);
 
-    // Invia risposte e notifiche fuori lock
     if (move_made) {
-        // Blocco per inviare stato board
         pthread_mutex_lock(&game_list_mutex);
         if(find_game_index_unsafe(current_game_id) == game_idx) {
              broadcast_game_state(game_idx);
@@ -421,33 +462,28 @@ move_cleanup:
             send_to_client(player_fd, notify_self);
             if (opponent_fd_if_game_over >= 0) send_to_client(opponent_fd_if_game_over, notify_opponent);
 
-            // Invia offerta rematch / manda perdente in lobby
-            if (winner_fd_if_game_over != -1) { // C'è un vincitore (W/L case)
-                // Invia offerta SOLO al vincitore
+            if (winner_fd_if_game_over != -1) {
                 LOG("Sending rematch offer to winner '%s' (fd %d) for game %d\n", client_name, winner_fd_if_game_over, current_game_id);
                 send_to_client(winner_fd_if_game_over, CMD_REMATCH_OFFER);
 
-                // **MODIFICA**: Invia comando per tornare in lobby SUBITO al perdente
                 if (opponent_fd_if_game_over >= 0) {
                      LOG("Sending loser (fd %d) direct 'back to lobby' command (RESP:REMATCH_DECLINED) for game %d\n", opponent_fd_if_game_over, current_game_id);
-                     send_to_client(opponent_fd_if_game_over, RESP_REMATCH_DECLINED); // Questo dirà al client di tornare in lobby
+                     send_to_client(opponent_fd_if_game_over, RESP_REMATCH_DECLINED);
                 }
 
-            } else { // Pareggio
+            } else {
                 LOG("Sending rematch offer to both players (fd %d, fd %d) for DRAW game %d\n", player_fd, opponent_fd_if_game_over, current_game_id);
                 send_to_client(player_fd, CMD_REMATCH_OFFER);
                 if(opponent_fd_if_game_over >= 0) send_to_client(opponent_fd_if_game_over, CMD_REMATCH_OFFER);
             }
         }
-    } else { // Errore di mossa, invia messaggio di errore solo al client che ha inviato la mossa
+    } else {
         move_error_exit:
         if (player_fd >= 0 && response[0] != '\0') {
              send_to_client(player_fd, response);
          }
     }
 }
-
-
 
 void process_rematch_command(int client_idx, const char* choice) {
     if (client_idx < 0 || client_idx >= MAX_TOTAL_CLIENTS || !choice) return;
@@ -463,12 +499,10 @@ void process_rematch_command(int client_idx, const char* choice) {
     bool send_direct_response_to_caller = false;
     bool send_fail_response_to_caller_due_to_opponent_no = false;
     bool restart_draw_game = false;
-    // bool reset_game_on_exit = false; // --- VARIABILE RIMOSSA --- Non decidiamo più qui il reset
 
     pthread_mutex_lock(&client_list_mutex);
     pthread_mutex_lock(&game_list_mutex);
 
-    // Blocco iniziale per ottenere informazioni (INVARIATO)
     if (!clients[client_idx].active) { goto rematch_cleanup_nolock; }
     caller_fd = clients[client_idx].fd; current_game_id = clients[client_idx].game_id;
     strncpy(caller_name, clients[client_idx].name, MAX_NAME_LEN); caller_name[MAX_NAME_LEN - 1] = '\0';
@@ -495,10 +529,8 @@ void process_rematch_command(int client_idx, const char* choice) {
     opponent_fd = find_opponent_fd(game, caller_fd);
     opponent_idx = find_client_index_unsafe(opponent_fd);
 
-    // *** LOGICA DECISIONE MODIFICATA ***
     if (strcmp(choice, CMD_REMATCH_YES) == 0) {
         if (is_draw) {
-            // ... (logica DRAW YES - INVARIATA, NON resetta lo slot) ...
             LOG("Rematch DRAW YES from %s (fd %d) for game %d\n", caller_name, caller_fd, game->id);
             RematchChoice opponent_choice;
             if (is_caller_p1) {
@@ -525,46 +557,39 @@ void process_rematch_command(int client_idx, const char* choice) {
                 clients[client_idx].state = CLIENT_STATE_LOBBY; clients[client_idx].game_id = 0;
                 snprintf(response_caller, sizeof(response_caller), "%s", RESP_REMATCH_DECLINED);
                 send_fail_response_to_caller_due_to_opponent_no = true;
-                // --- NON RESETTARE QUI ---
-                // reset_game_on_exit = true; // RIMOSSO
-                 // La pulizia avverrà quando il secondo giocatore (quello che ha detto NO) si disconnette
             } else {
                 LOG("Rematch DRAW: %s said YES for game %d. Waiting for opponent's choice.\n", caller_name, game->id);
             }
-        } else { // Vincitore dice YES
-             // ... (logica WINNER YES - INVARIATA, NON resetta lo slot perché va in WAITING) ...
+        } else {
              LOG("Rematch WINNER YES from %s (fd %d) for game %d\n", caller_name, caller_fd, game->id);
             game->state = GAME_STATE_WAITING;
             game->player1_fd = caller_fd;
-             // Pulisci P2, resetta board, stato e flags
             game->player2_fd = -1; game->player2_name[0] = '\0';
             init_board(game->board);
             game->current_turn_fd = -1; game->winner_fd = -1;
             game->player1_accepted_rematch = REMATCH_CHOICE_PENDING;
             game->player2_accepted_rematch = REMATCH_CHOICE_PENDING;
-            clients[client_idx].state = CLIENT_STATE_WAITING; // Il vincitore ora aspetta
+            clients[client_idx].state = CLIENT_STATE_WAITING;
             if(opponent_idx != -1 && clients[opponent_idx].active && clients[opponent_idx].fd == opponent_fd) {
-                // Manda il perdente in lobby perché il vincitore rigioca
                 clients[opponent_idx].state = CLIENT_STATE_LOBBY; clients[opponent_idx].game_id = 0;
                 snprintf(notify_opponent_on_fail, sizeof(notify_opponent_on_fail), "%s", NOTIFY_OPPONENT_ACCEPTED_REMATCH);
                  LOG("Moving loser '%s' (fd %d) to LOBBY as winner accepted rematch for game %d.\n", clients[opponent_idx].name, opponent_fd, game->id);
             } else {
                  LOG("Loser (opponent_fd %d) already inactive or invalid for game %d when winner accepted rematch.\n", opponent_fd, game->id);
             }
-            snprintf(response_caller, sizeof(response_caller), RESP_REMATCH_ACCEPTED_FMT, game->id); // Conferma al vincitore
+            snprintf(response_caller, sizeof(response_caller), RESP_REMATCH_ACCEPTED_FMT, game->id);
             send_direct_response_to_caller = true;
         }
 
     } else if (strcmp(choice, CMD_REMATCH_NO) == 0) {
         LOG("Rematch NO from %s (fd %d) for game %d\n", caller_name, caller_fd, game->id);
 
-        clients[client_idx].state = CLIENT_STATE_LOBBY; // Chi dice NO va in lobby
+        clients[client_idx].state = CLIENT_STATE_LOBBY;
         clients[client_idx].game_id = 0;
-        snprintf(response_caller, sizeof(response_caller), "%s", RESP_REMATCH_DECLINED); // Riceve conferma
+        snprintf(response_caller, sizeof(response_caller), "%s", RESP_REMATCH_DECLINED);
         send_direct_response_to_caller = true;
 
         if (is_draw) {
-            // ... (logica DRAW NO - INVARIATA rispetto all'ultima versione) ...
              LOG("Handling DRAW NO from %s for game %d\n", caller_name, game->id);
             RematchChoice opponent_choice;
             if (is_caller_p1) {
@@ -576,46 +601,35 @@ void process_rematch_command(int client_idx, const char* choice) {
             }
             if (opponent_choice == REMATCH_CHOICE_PENDING) {
                  LOG("Game %d: %s said NO (draw). Opponent PENDING. No opponent notification sent now.\n", game->id, caller_name);
-                 // NON RESETTARE SLOT, NON NOTIFICARE OPPONENT
             } else {
                  LOG("Game %d: %s said NO (draw). Opponent had already chosen (%d). Notifying opponent.\n", game->id, caller_name, opponent_choice);
                  if (opponent_idx != -1 && clients[opponent_idx].active && clients[opponent_idx].fd == opponent_fd) {
-                     // Manda l'avversario in lobby (se non lo è già) e notifica
                      clients[opponent_idx].state = CLIENT_STATE_LOBBY;
                      clients[opponent_idx].game_id = 0;
                      snprintf(notify_opponent_on_fail, sizeof(notify_opponent_on_fail), "%s", NOTIFY_OPPONENT_DECLINED);
                      LOG("Moving opponent '%s' (fd %d) to LOBBY (draw-rematch final NO from %s).\n", clients[opponent_idx].name, opponent_fd, caller_name);
                  }
-                  // --- NON RESETTARE QUI --- La pulizia avverrà quando entrambi sono disconnessi dalla partita finita
-                 // reset_game_on_exit = true; // RIMOSSO
             }
         } else { // Vincitore dice NO
             LOG("Handling WINNER NO from %s for game %d\n", caller_name, game->id);
              if(opponent_idx != -1 && clients[opponent_idx].active && clients[opponent_idx].fd == opponent_fd){
-                // Manda il perdente in lobby e notifica che il vincitore non rigioca
-                clients[opponent_idx].state = CLIENT_STATE_LOBBY; // (Probabilmente già fatto, ma sicuro)
+                clients[opponent_idx].state = CLIENT_STATE_LOBBY;
                 clients[opponent_idx].game_id = 0;
                 snprintf(notify_opponent_on_fail, sizeof(notify_opponent_on_fail), "%s", NOTIFY_OPPONENT_DECLINED);
                 LOG("Notifying loser '%s' (fd %d) that winner declined rematch for game %d.\n", clients[opponent_idx].name, opponent_fd, game->id);
             } else {
                  LOG("Loser (opponent_fd %d) already inactive or invalid when winner declined rematch for game %d.\n", opponent_fd, game->id);
             }
-            // --- NON RESETTARE QUI --- La pulizia avverrà quando entrambi sono disconnessi dalla partita finita
-             // reset_game_on_exit = true; // RIMOSSO
         }
 
-    } else { // Comando non valido
+    } else {
         snprintf(error_response, sizeof(error_response), "%s\n", ERR_INVALID_REMATCH_CHOICE);
     }
 
 rematch_cleanup:
-    // --- RIMOSSO BLOCCO RESET GAME ---
-    // if (reset_game_on_exit && game_idx != -1) { ... }
-
     pthread_mutex_unlock(&game_list_mutex);
     pthread_mutex_unlock(&client_list_mutex);
 
-    // Invio messaggi FUORI DAI LOCK (Logica invio invariata)
     if (restart_draw_game) {
         if(p1_fd >= 0 && notify_p1_start[0]) send_to_client(p1_fd, notify_p1_start);
         if(p2_fd >= 0 && notify_p2_start[0]) send_to_client(p2_fd, notify_p2_start);
@@ -654,7 +668,6 @@ bool process_quit_command(int client_idx) {
 
      LOG("Client %s sent QUIT. State: %d, Game ID: %d\n", client_name, current_state, current_game_id);
 
-     // Se PLAYING (anche post-partita) o WAITING, gestisci uscita da contesto gioco
      if (current_state == CLIENT_STATE_PLAYING || current_state == CLIENT_STATE_WAITING) {
          LOG("Client %s leaving game %d context via QUIT.\n", client_name, current_game_id);
          pthread_mutex_lock(&client_list_mutex); pthread_mutex_lock(&game_list_mutex);
@@ -664,15 +677,14 @@ bool process_quit_command(int client_idx) {
          } else {
              LOG("QUIT: Game %d not found for client %s.\n", current_game_id, client_name);
          }
-         // Indipendentemente da handle_player_leaving_game, metti chi ha inviato QUIT in lobby
          if (clients[client_idx].active) { // Ricontrolla
              clients[client_idx].state = CLIENT_STATE_LOBBY; clients[client_idx].game_id = 0;
              LOG("Client %s moved to LOBBY after QUIT.\n", client_name);
          }
          pthread_mutex_unlock(&game_list_mutex); pthread_mutex_unlock(&client_list_mutex);
          send_to_client(client_fd, RESP_QUIT_OK); // Conferma LOBBY
-         request_disconnect = false; // Non disconnettere il client
-     } else { // Altrimenti (LOBBY, CONNECTED) QUIT significa disconnessione
+         request_disconnect = false;
+     } else {
          LOG("Client %s sent QUIT from state %d. Interpreting as disconnect.\n", client_name, current_state);
          request_disconnect = true;
      }
