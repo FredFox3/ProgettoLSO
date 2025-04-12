@@ -26,7 +26,7 @@ public class PartitaItemController {
         return LocalDateTime.now().format(TIMESTAMP_FORMATTER);
     }
 
-    public void setData(int gameId, String creatorName, String state, String loggedInPlayerName) {
+    public void setData(int gameId, String creatorName, String state, String loggedInPlayerName, boolean isPlayerAlreadyWaiting) {
         this.gameId = gameId;
         this.creatorName = creatorName;
 
@@ -35,22 +35,14 @@ public class PartitaItemController {
                 labelNumeroPartita.setText("Partita " + gameId + "\n(di " + (creatorName != null ? creatorName : "?") + ")");
             }
             if (labelStatoPartita != null) {
-                String displayState = state;
-                if ("Waiting".equalsIgnoreCase(state)) displayState = "In attesa";
-                else if ("In Progress".equalsIgnoreCase(state)) displayState = "In corso";
-                else if ("Finished".equalsIgnoreCase(state)) displayState = "Terminata";
-                else displayState = (state != null ? state : "N/D");
-
-                labelStatoPartita.setText(displayState);
+                labelStatoPartita.setText(state != null ? state : "N/A");
                 updateStateStyle(state);
             }
             if (buttonUniscitiPartita != null) {
-                boolean shouldBeDisabled = true;
-                if ("Waiting".equalsIgnoreCase(state)) {
-                    if (loggedInPlayerName != null && !loggedInPlayerName.equals(creatorName)) {
-                        shouldBeDisabled = false;
-                    }
-                }
+                boolean isMyOwnGame = loggedInPlayerName != null && loggedInPlayerName.equals(this.creatorName);
+                boolean canJoinThisState = "Waiting".equalsIgnoreCase(state);
+                boolean shouldBeDisabled = isPlayerAlreadyWaiting || isMyOwnGame || !canJoinThisState;
+
                 buttonUniscitiPartita.setDisable(shouldBeDisabled);
             }
         });
@@ -99,7 +91,7 @@ public class PartitaItemController {
         Alert alert = new Alert(Alert.AlertType.ERROR);
         alert.setTitle(title); alert.setHeaderText(null); alert.setContentText(content);
         try { Stage owner = (buttonUniscitiPartita != null && buttonUniscitiPartita.getScene() != null) ? (Stage) buttonUniscitiPartita.getScene().getWindow() : null; if (owner != null) alert.initOwner(owner); }
-        catch (Exception e) {  }
+        catch (Exception e) { /* Ignora errore owner */ }
         alert.showAndWait();
     }
 }

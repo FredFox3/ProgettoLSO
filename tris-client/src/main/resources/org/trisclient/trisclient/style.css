@@ -20,17 +20,17 @@
 }
 
 .state-inprogress {
-    -fx-text-fill: #2ECC71; /* Verde */
+    -fx-text-fill: #2ECC71;
     -fx-font-weight: bold;
     -fx-font-style: italic;
 }
 
 .state-finished {
-    -fx-text-fill: #95A5A6; /* Grigio */
+    -fx-text-fill: #95A5A6;
     -fx-font-style: italic;
 }
 
 .state-unknown {
-    -fx-text-fill: #E74C3C; /* Rosso per errori/sconosciuto */
+    -fx-text-fill: #E74C3C;
     -fx-font-style: italic;
 }
