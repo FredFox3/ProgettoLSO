@@ -44,6 +44,7 @@ public class GameController implements Initializable, NetworkService.ServerListe
     private final AtomicBoolean opponentDeclinedWhileWaiting = new AtomicBoolean(false);
     private volatile String[] cachedBoard = null;
     private final AtomicBoolean cachedTurn = new AtomicBoolean(false);
+    private final AtomicBoolean isReturningHome = new AtomicBoolean(false);
 
     private static final DateTimeFormatter TIMESTAMP_FORMATTER =
             DateTimeFormatter.ofPattern("HH:mm:ss.SSS");
@@ -52,12 +53,14 @@ public class GameController implements Initializable, NetworkService.ServerListe
         return LocalDateTime.now().format(TIMESTAMP_FORMATTER);
     }
 
+    // --- initialize() MODIFICATO per resettare il nuovo flag ---
     @Override
     public void initialize(URL url, ResourceBundle resourceBundle) {
         System.out.println(getCurrentTimestamp()+" - GameController ("+this.hashCode()+"): FXML initialize CHIAMATO");
         this.lastGameResult = null; this.opponentDeclinedWhileWaiting.set(false);
         isSetupComplete.set(false); gameActive.set(false); gameFinishedWaitingRematch.set(false);
         cachedBoard = null; cachedTurn.set(false); myTurn = false;
+        isReturningHome.set(false); // <<< Reset nuovo flag
         for (int i = 0; i < 3; i++) {
             for (int j = 0; j < 3; j++) {
                 Button btn = new Button(" ");
@@ -70,9 +73,10 @@ public class GameController implements Initializable, NetworkService.ServerListe
             }
         }
         gridPane.setDisable(true); if(buttonLeave!=null) buttonLeave.setDisable(false);
-        TextTurno.setText("Caricamento partita..."); // Tradotto
+        TextTurno.setText("Caricamento partita...");
     }
 
+    // --- setupGame() MODIFICATO per resettare il nuovo flag ---
     public void setupGame(NetworkService serviceInstance, int gameId, char symbol, String opponentName,
                           Consumer<String> returnCallback,
                           String[] initialBoard, boolean initialTurn) {
@@ -82,14 +86,15 @@ public class GameController implements Initializable, NetworkService.ServerListe
         this.opponentName = opponentName; this.returnToHomeCallback = returnCallback;
         this.isSetupComplete.set(false); this.gameActive.set(false);
         this.gameFinishedWaitingRematch.set(false); this.myTurn = false;
+        this.isReturningHome.set(false); // <<< Reset nuovo flag
         if (initialBoard != null) this.cachedBoard = initialBoard; else this.cachedBoard = null;
         this.cachedTurn.set(initialTurn);
 
         if (this.networkService == null) {
             System.err.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): Errore critico in setupGame - NetworkService è null!");
             Platform.runLater(() -> {
-                showError("Errore Critico", "Errore interno di rete. Impossibile avviare la partita."); // Tradotto
-                if (returnToHomeCallback != null) returnToHomeCallback.accept("Errore di Rete Critico"); // Tradotto
+                showError("Errore Critico", "Errore interno di rete. Impossibile avviare la partita.");
+                if (returnToHomeCallback != null) returnToHomeCallback.accept("Errore di Rete Critico");
             });
             return;
         }
@@ -97,7 +102,7 @@ public class GameController implements Initializable, NetworkService.ServerListe
         this.networkService.setServerListener(this);
 
         Platform.runLater(() -> {
-            TextTurno.setText("Partita " + gameId + " vs " + opponentName + ". Sei " + mySymbol + "."); // Tradotto
+            TextTurno.setText("Partita " + gameId + " vs " + opponentName + ". Sei " + mySymbol + ".");
             gridPane.setDisable(true); if (buttonLeave != null) buttonLeave.setDisable(false);
             isSetupComplete.set(true); gameActive.set(true);
             System.out.println(getCurrentTimestamp() + " - GC (runLater): Setup COMPLETATO. gameActive=true");
@@ -313,144 +318,139 @@ public class GameController implements Initializable, NetworkService.ServerListe
         });
     }
 
+    // --- onRematchDeclined() MODIFICATO ---
+    // --- onRematchDeclined() MODIFICATO ---
     @Override
     public void onRematchDeclined() {
         System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): onRematchDeclined received. LastResult="+lastGameResult+" | WaitingFlag before:"+gameFinishedWaitingRematch.get());
 
-        boolean wasWaiting = gameFinishedWaitingRematch.getAndSet(false); // Ottieni e resetta flag attesa
-        gameActive.set(false); // Gioco non più attivo
-        myTurn = false; // Non è il mio turno
-        opponentDeclinedWhileWaiting.set(false); // Resetta questo flag
-
-        // --- Logica Chiave ---
-        // Se questo messaggio è arrivato PERCHE' ABBIAMO PERSO (lastGameResult == LOSE),
-        // ignoriamo questo messaggio perché l'azione di ritorno alla lobby verrà gestita
-        // da onOpponentRematchDecision quando il vincitore decide.
-        if ("LOSE".equalsIgnoreCase(lastGameResult)) {
-            System.out.println(getCurrentTimestamp()+" - GC: Ignoring initial REMATCH_DECLINED for LOSE case. Waiting for opponent decision.");
-            // Resettiamo gameFinishedWaitingRematch qui perché abbiamo PERSO, non stiamo aspettando nulla
-            // L'abbiamo già fatto con getAndSet sopra, ma per chiarezza
-            gameFinishedWaitingRematch.set(false);
-            return; // << USCIAMO QUI SE ERA UNA SCONFITTA
+        if (isReturningHome.get()) {
+            System.out.println(getCurrentTimestamp()+" - GC: onRematchDeclined ignorato, ritorno già in corso.");
+            return;
         }
-        // ------------------
 
-        // Se siamo qui, non abbiamo perso. Significa che:
-        // 1. Abbiamo inviato REMATCH NO noi stessi.
-        // 2. Abbiamo inviato REMATCH YES (in pareggio) ma l'avversario aveva già detto NO.
+        boolean wasWaiting = gameFinishedWaitingRematch.getAndSet(false);
+        gameActive.set(false);
+        myTurn = false;
+        opponentDeclinedWhileWaiting.set(false);
 
-        String alertTitle = "Info Rivincita";
-        String alertContent = "Returning to the lobby.";
-        String returnReason = "Rematch declined or game ended";
+        // Determina se mostrare popup o solo tornare indietro
+        boolean showPopup = false; // << DEFAULT: non mostrare popup
+        String alertTitle = "Info Rivincita"; // Default non usato se showPopup è false
+        String alertContent = "Ritorno alla lobby.";
+        String returnReason = "Rivincita rifiutata"; // Default, corretto per WIN/DRAW + NO click
 
-        // Adatta i messaggi in base alla causa (se non era LOSE)
-        if (wasWaiting) { // Caso 2: Avevamo detto YES ma l'altro NO (quindi stavamo aspettando)
+        if ("LOSE".equalsIgnoreCase(lastGameResult)) {
+            // PERSO -> Mostra popup specifico
+            alertTitle = "Partita Terminata";
+            alertContent = "Partita persa.\nRitorno alla lobby.";
+            returnReason = "Partita persa";
+            showPopup = true;
+        } else if (wasWaiting && "DRAW".equalsIgnoreCase(lastGameResult)) {
+            // PAREGGIO + STAVI ASPETTANDO (l'altro ha detto NO prima) -> Mostra popup specifico
             alertTitle = "Rivincita Annullata";
             alertContent = "L'avversario aveva già rifiutato la rivincita.\nRitorno alla lobby.";
             returnReason = "Avversario ha rifiutato prima";
-        } else { // Caso 1: Abbiamo detto NO noi
-            alertTitle = "Rivincita Rifiutata";
-            alertContent = "Hai rifiutato la rivincita.\nRitorno alla lobby.";
-            returnReason = "Rivincita rifiutata";
+            showPopup = true;
+        }
+        // Altrimenti (hai VINTO o PAREGGIO e hai cliccato NO tu):
+        // `showPopup` rimane `false`. `returnReason` è già "Rivincita rifiutata".
+
+        // Avvia l'uscita se non già in corso
+        if (isReturningHome.getAndSet(true)) {
+            System.out.println(getCurrentTimestamp() + " - GC: Doppia chiamata a ritorno home in onRematchDeclined, ignorando.");
+            return;
         }
 
         final String finalAlertContent = alertContent;
         final String finalReturnReason = returnReason;
         final String finalAlertTitle = alertTitle;
+        final boolean finalShowPopup = showPopup;
 
         Platform.runLater(() -> {
-            // Mostra UN SOLO popup per questi casi
-            showInfo(finalAlertTitle, finalAlertContent);
+            if (finalShowPopup) {
+                showInfo(finalAlertTitle, finalAlertContent);
+            } else {
+                System.out.println(getCurrentTimestamp() + " - GC: Ritorno silenzioso alla lobby dopo aver rifiutato la rivincita.");
+            }
+
             if (returnToHomeCallback != null) {
                 returnToHomeCallback.accept(finalReturnReason);
             } else {
                 System.err.println("GC: returnToHomeCallback null after onRematchDeclined!");
-                showError("Errore Critico", "Impossibile tornare alla lobby dopo fine partita/rifiuto rivincita. Callback mancante.");
+                // Mostra errore anche se non doveva esserci popup
+                showError("Errore Critico", "Impossibile tornare alla lobby. Callback mancante.");
             }
         });
     }
     // --- FINE onRematchDeclined() ---
 
 
-//    @Override
-//    public void onRematchDeclined() {
-//        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): onRematchDeclined ricevuto. LastResult="+lastGameResult+" | WaitingFlag prima:"+gameFinishedWaitingRematch.get());
-//
-//        boolean wasWaiting = gameFinishedWaitingRematch.getAndSet(false);
-//        gameActive.set(false); myTurn=false;
-//        opponentDeclinedWhileWaiting.set(false);
-//
-//        String alertTitle = "Info Rivincita"; // Tradotto
-//        String alertContent = "Ritorno alla lobby."; // Tradotto
-//        String returnReason = "Rivincita rifiutata o partita terminata"; // Tradotto
-//
-//        if ("LOSE".equalsIgnoreCase(lastGameResult)) {
-//            alertContent = "Partita persa. Ritorno alla lobby."; // Tradotto
-//            returnReason = "Partita persa"; // Tradotto
-//            // alertTitle = "Partita Terminata"; // Opzionale
-//        } else if (wasWaiting) {
-//            alertTitle = "Rivincita Annullata"; // Tradotto
-//            alertContent = "L'avversario aveva già rifiutato la rivincita.\nRitorno alla lobby."; // Tradotto
-//            returnReason = "Avversario ha rifiutato prima"; // Tradotto
-//        } else {
-//            alertTitle = "Rivincita Rifiutata"; // Tradotto
-//            alertContent = "Hai rifiutato la rivincita.\nRitorno alla lobby."; // Tradotto
-//            returnReason = "Rivincita rifiutata"; // Tradotto
-//        }
-//
-//        final String finalAlertContent = alertContent;
-//        final String finalReturnReason = returnReason;
-//        final String finalAlertTitle = alertTitle;
-//
-//        Platform.runLater(() -> {
-//            showInfo(finalAlertTitle, finalAlertContent);
-//            if (returnToHomeCallback != null) {
-//                returnToHomeCallback.accept(finalReturnReason);
-//            } else {
-//                System.err.println("GC: returnToHomeCallback null dopo onRematchDeclined!");
-//                showError("Errore Critico", "Impossibile tornare alla lobby dopo fine partita/rifiuto rivincita. Callback mancante."); // Tradotto
-//            }
-//        });
-//    }
-
+    // --- onOpponentRematchDecision() MODIFICATO ---
     @Override
     public void onOpponentRematchDecision(boolean opponentAccepted) {
-        final String decision = opponentAccepted ? "accettato" : "rifiutato"; // Tradotto
-        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): *** onOpponentRematchDecision ricevuto: "+decision+" *** | Flag attesa attuale: "+gameFinishedWaitingRematch.get() + " | isDraw: "+("DRAW".equalsIgnoreCase(lastGameResult)));
+        final String decision = opponentAccepted ? "accettato" : "rifiutato";
+        System.out.println(getCurrentTimestamp() + " - GC ("+this.hashCode()+"): *** onOpponentRematchDecision ricevuto: "+decision+" *** | Flag attesa attuale: "+gameFinishedWaitingRematch.get() + " | isDraw: "+("DRAW".equalsIgnoreCase(lastGameResult)) + " | LastResult: " + lastGameResult);
 
-        if (!opponentAccepted) {
-            System.out.println(getCurrentTimestamp()+" - GC: Avversario ha RIFIUTATO la rivincita. Ritorno home."); // Tradotto
+        // Ignora se stiamo già uscendo
+        if (isReturningHome.get()) {
+            System.out.println(getCurrentTimestamp()+" - GC: Ignoro onOpponentRematchDecision perché ritorno già in corso.");
+            return;
+        }
+        // Ignora se il gioco è finito ma non siamo in attesa (es. abbiamo già detto NO noi)
+        if (!gameActive.get() && !gameFinishedWaitingRematch.get()){
+            System.out.println(getCurrentTimestamp()+" - GC: Ignoro onOpponentRematchDecision, stato non attivo/in attesa.");
+            return;
+        }
 
+
+        if (!opponentAccepted) { // === OPPONENT HA RIFIUTATO ===
+            // Questo arriva al VINCICTORE o a chi aveva detto YES in PAREGGIO
+            // quando l'avversario clicca NO.
+            // Il PERDENTE non dovrebbe mai arrivare qui perché onRematchDeclined gestisce il suo ritorno.
+            if ("LOSE".equalsIgnoreCase(lastGameResult)) {
+                System.err.println(getCurrentTimestamp()+" - GC: ERRORE LOGICO - onOpponentRematchDecision(false) chiamato per un perdente?");
+                // Resetta per sicurezza e ignora
+                gameFinishedWaitingRematch.set(false); gameActive.set(false); myTurn = false; isReturningHome.set(true);
+                return;
+            }
+
+            System.out.println(getCurrentTimestamp()+" - GC: Avversario ha RIFIUTATO la rivincita. Ritorno home.");
+
+            // Controlla se stavamo mostrando il popup del pareggio
+            if (opponentDeclinedWhileWaiting.get()) {
+                System.out.println(getCurrentTimestamp()+" - GC: Rifiuto avversario rilevato mentre popup era aperto (o subito dopo). Flag gestito da onRematchOffer.");
+                // L'azione di ritorno verrà gestita da onRematchOffer quando l'utente chiude il popup.
+                // Non dobbiamo fare nulla qui, se non resettare il flag waiting, se serve.
+                gameFinishedWaitingRematch.set(false); // Potrebbe non essere necessario ma per sicurezza
+                return;
+            }
+
+            // Se non stavamo mostrando il popup, torna subito alla home
+            if (isReturningHome.getAndSet(true)) return; // Previene doppia azione
             boolean wasWaiting = gameFinishedWaitingRematch.getAndSet(false);
             gameActive.set(false);
             myTurn = false;
-            opponentDeclinedWhileWaiting.set(false);
 
             Platform.runLater(() -> {
-                showInfo("Rivincita Rifiutata", "L'avversario ha rifiutato la rivincita.\nRitorno alla lobby."); // Tradotto
+                showInfo("Rivincita Rifiutata", "L'avversario ha rifiutato la rivincita.\nRitorno alla lobby.");
                 if (returnToHomeCallback != null) {
-                    returnToHomeCallback.accept("Avversario ha rifiutato la rivincita"); // Tradotto
+                    returnToHomeCallback.accept("Avversario ha rifiutato la rivincita");
                 } else {
-                    System.err.println("GC: Callback null sulla decisione RIFIUTO dell'avversario!");
-                    showError("Errore Critico", "Impossibile tornare alla lobby dopo il rifiuto dell'avversario. Callback mancante."); // Tradotto
+                    System.err.println("GC: Callback null on Opponent DECLINED decision!");
+                    showError("Errore Critico", "Impossibile tornare alla lobby dopo il rifiuto dell'avversario. Callback mancante.");
                     if(networkService != null) networkService.disconnect();
                 }
             });
 
-        } else { // opponentAccepted == true
-            if ("LOSE".equalsIgnoreCase(lastGameResult)) {
-                System.out.println(getCurrentTimestamp()+" - GC: Avversario (Vincitore) ha ACCETTATO la rivincita. Ritorno il perdente alla lobby."); // Tradotto
-                boolean wasWaiting = gameFinishedWaitingRematch.getAndSet(false);
-                gameActive.set(false); myTurn = false;
-                Platform.runLater(() -> {
-                    showInfo("Rivincita Accettata (dall'Avversario)", "Il vincitore ha accettato la rivincita e sta ospitando una nuova partita.\nRitorno alla lobby."); // Tradotto
-                    if (returnToHomeCallback != null) { returnToHomeCallback.accept("Avversario ha accettato, torno alla lobby"); } // Tradotto
-                    else { System.err.println("GC: Callback null su ACCETTAZIONE Avversario (caso Perdente)!"); }
-                });
-            } else if ("DRAW".equalsIgnoreCase(lastGameResult)) {
-                System.out.println(getCurrentTimestamp()+" - GC: Avversario ha ACCETTATO (PAREGGIO). In attesa scelta locale o GameStart. Flag waitingRematch="+gameFinishedWaitingRematch.get()); // Tradotto
-            } else { // WIN
-                System.err.println(getCurrentTimestamp()+" - GC: Vincitore ha ricevuto Accettazione Avversario? Messaggio inaspettato. Ignoro."); // Tradotto
+        } else { // === OPPONENT HA ACCETTATO ===
+            // Questo arriva solo in caso di PAREGGIO, se tu hai già detto YES.
+            // Non arriva né al vincitore né al perdente.
+            if ("DRAW".equalsIgnoreCase(lastGameResult)) {
+                System.out.println(getCurrentTimestamp()+" - GC: Avversario ha ACCETTATO (PAREGGIO). Aspetto GAME_START.");
+                // GAME_START gestirà il reset dei flag e l'avvio della partita
+            } else {
+                System.err.println(getCurrentTimestamp()+" - GC: Ricevuto onOpponentRematchDecision(true) ma non era pareggio? Stato: " + lastGameResult +". Ignoro.");
             }
         }
     }
