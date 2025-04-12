@@ -103,7 +103,7 @@ public class PartitaItemController {
         Alert alert = new Alert(Alert.AlertType.ERROR);
         alert.setTitle(title); alert.setHeaderText(null); alert.setContentText(content);
         try { Stage owner = (buttonUniscitiPartita != null && buttonUniscitiPartita.getScene() != null) ? (Stage) buttonUniscitiPartita.getScene().getWindow() : null; if (owner != null) alert.initOwner(owner); }
-        catch (Exception e) { /* Ignora errore owner */ }
+        catch (Exception e) { }
         alert.showAndWait();
     }
 }
