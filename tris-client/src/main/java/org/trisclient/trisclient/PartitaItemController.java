@@ -26,39 +26,36 @@ public class PartitaItemController {
         return LocalDateTime.now().format(TIMESTAMP_FORMATTER);
     }
 
-    public void setData(int gameId, String creatorName, String state, String loggedInPlayerName, boolean isPlayerAlreadyWaiting) {
+    public void setData(int gameId, String creatorName, String state, String loggedInPlayerName) {
         this.gameId = gameId;
         this.creatorName = creatorName;
 
         Platform.runLater(() -> {
             if (labelNumeroPartita != null) {
-                labelNumeroPartita.setText("Partita " + gameId + "\n(di " + (creatorName != null ? creatorName : "?") + ")"); // Tradotto
+                labelNumeroPartita.setText("Partita " + gameId + "\n(di " + (creatorName != null ? creatorName : "?") + ")");
             }
             if (labelStatoPartita != null) {
-                labelStatoPartita.setText(state != null ? state : "N/A");
+                String displayState = state;
+                if ("Waiting".equalsIgnoreCase(state)) displayState = "In attesa";
+                else if ("In Progress".equalsIgnoreCase(state)) displayState = "In corso";
+                else if ("Finished".equalsIgnoreCase(state)) displayState = "Terminata";
+                else displayState = (state != null ? state : "N/D");
+
+                labelStatoPartita.setText(displayState);
                 updateStateStyle(state);
             }
             if (buttonUniscitiPartita != null) {
-                // ----- LOGICA DISABILITAZIONE MODIFICATA -----
-                boolean isMyOwnGame = loggedInPlayerName != null && loggedInPlayerName.equals(this.creatorName);
-                boolean canJoinThisState = "Waiting".equalsIgnoreCase(state);
-
-                // Disabilita se:
-                // 1. Il giocatore loggato STA GIA' ASPETTANDO in un'altra partita (isPlayerAlreadyWaiting), OPPURE
-                // 2. Questo item rappresenta la PROPRIA partita (isMyOwnGame), OPPURE
-                // 3. Lo stato di QUESTA partita non è "Waiting" (!canJoinThisState)
-                boolean shouldBeDisabled = isPlayerAlreadyWaiting || isMyOwnGame || !canJoinThisState;
-
+                boolean shouldBeDisabled = true;
+                if ("Waiting".equalsIgnoreCase(state)) {
+                    if (loggedInPlayerName != null && !loggedInPlayerName.equals(creatorName)) {
+                        shouldBeDisabled = false;
+                    }
+                }
                 buttonUniscitiPartita.setDisable(shouldBeDisabled);
-                // Log di debug per capire perché viene disabilitato
-                // System.out.println("Impostazione bottone Unisciti per partita "+gameId+": Disabilitato="+shouldBeDisabled +
-                //                    " (isPlayerAlreadyWaiting="+isPlayerAlreadyWaiting+", isMyOwnGame="+isMyOwnGame+", canJoinThisState="+canJoinThisState+")");
-                // ----- FINE LOGICA DISABILITAZIONE MODIFICATA -----
             }
         });
     }
 
-    // Mantiene lo stile basato sullo stato originale (inglese)
     private void updateStateStyle(String originalState) {
         if (labelStatoPartita == null) return;
         labelStatoPartita.getStyleClass().removeAll("state-waiting", "state-inprogress", "state-unknown", "state-finished");
@@ -71,11 +68,11 @@ public class PartitaItemController {
 
     @FXML
     private void handleUniscitiPartita() {
-        System.out.println(getCurrentTimestamp() + " - PartitaItemController: Cliccato Unisciti per ID partita: " + gameId + " (creatore: " + this.creatorName + ")"); // Tradotto
+        System.out.println(getCurrentTimestamp() + " - PartitaItemController: Cliccato Unisciti per ID partita: " + gameId + " (creatore: " + this.creatorName + ")");
 
         if (HomePageController.staticPlayerName != null && HomePageController.staticPlayerName.equals(this.creatorName)) {
-            System.err.println("Tentativo di unirsi alla propria partita " + gameId + ". Annullamento."); // Tradotto
-            showError("Azione non permessa", "Non puoi unirti alla tua stessa partita."); // Già IT
+            System.err.println("Tentativo di unirsi alla propria partita " + gameId + ". Annullamento.");
+            showError("Azione non permessa", "Non puoi unirti alla tua stessa partita.");
             if(buttonUniscitiPartita != null) buttonUniscitiPartita.setDisable(true);
             return;
         }
@@ -83,11 +80,11 @@ public class PartitaItemController {
         NetworkService service = HomePageController.networkServiceInstance;
         if (service != null && service.isConnected()) {
             if (buttonUniscitiPartita != null) buttonUniscitiPartita.setDisable(true);
-            System.out.println(getCurrentTimestamp() + " - PartitaItemController: Invio JOIN_REQUEST " + gameId); // Tradotto
+            System.out.println(getCurrentTimestamp() + " - PartitaItemController: Invio JOIN_REQUEST " + gameId);
             service.sendJoinRequest(gameId);
         } else {
-            System.err.println(getCurrentTimestamp() + " - PartitaItemController: Impossibile unirsi, NetworkService non valido."); // Tradotto
-            showError("Errore Connessione", "Impossibile unirsi. Controlla connessione."); // Già IT
+            System.err.println(getCurrentTimestamp() + " - PartitaItemController: Impossibile unirsi, NetworkService non valido.");
+            showError("Errore Connessione", "Impossibile unirsi. Controlla connessione.");
         }
     }
 
@@ -102,7 +99,7 @@ public class PartitaItemController {
         Alert alert = new Alert(Alert.AlertType.ERROR);
         alert.setTitle(title); alert.setHeaderText(null); alert.setContentText(content);
         try { Stage owner = (buttonUniscitiPartita != null && buttonUniscitiPartita.getScene() != null) ? (Stage) buttonUniscitiPartita.getScene().getWindow() : null; if (owner != null) alert.initOwner(owner); }
-        catch (Exception e) { /* Ignora errore owner */ }
+        catch (Exception e) {  }
         alert.showAndWait();
     }
 }

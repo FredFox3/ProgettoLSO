@@ -10,7 +10,7 @@
 <?import javafx.scene.layout.VBox?>
 <?import javafx.scene.text.Font?>
 
-<AnchorPane prefHeight="400.0" prefWidth="500.0" xmlns="http://javafx.com/javafx/23.0.1" xmlns:fx="http://javafx.com/fxml/1" fx:controller="org.trisclient.trisclient.HomePageController">
+<AnchorPane prefHeight="450.0" prefWidth="500.0" xmlns="http://javafx.com/javafx/23.0.1" xmlns:fx="http://javafx.com/fxml/1" fx:controller="org.trisclient.trisclient.HomePageController">
    <children>
       <VBox alignment="CENTER" fillWidth="false" spacing="15.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="0.0" AnchorPane.topAnchor="0.0">
          <children>
@@ -25,7 +25,6 @@
                         </ImageView>
                      </graphic>
                   </Button>
-                  <!-- Testo già in Italiano -->
                   <Button fx:id="buttonCreaPartita" mnemonicParsing="false" onAction="#handleCreaPartita" prefHeight="40.0" text="Crea una nuova partita">
                      <font>
                         <Font size="18.0" />
@@ -33,14 +32,12 @@
                   </Button>
                </children>
             </HBox>
-            <!-- Testo già in Italiano -->
             <Label text="Partite esistenti:">
                <font>
                   <Font size="21.0" />
                </font>
             </Label>
             <FlowPane fx:id="flowPanePartite" hgap="20.0" prefWidth="1000.0" vgap="20.0" />
-            <!-- Testo placeholder, viene impostato dinamicamente -->
             <Label fx:id="labelStatus" text="Stato" />
          </children>
       </VBox>

@@ -1,4 +1,3 @@
-/* ======== Main.java ======== */
 package org.trisclient.trisclient;
 
 import javafx.application.Application;
@@ -24,47 +23,47 @@ public class Main extends Application {
 
     @Override
     public void start(Stage primaryStage) {
-        System.out.println(getCurrentTimestamp()+" - Applicazione Principale: start() chiamato."); // Tradotto
+        System.out.println(getCurrentTimestamp()+" - Applicazione Principale: start() chiamato.");
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/org/trisclient/trisclient/home-page-view.fxml"));
             Parent root = loader.load();
-            primaryStage.setTitle("Tris Client"); // Mantenuto nome proprio
+            primaryStage.setTitle("Tris Client");
             Scene scene = new Scene(root);
             String css = this.getClass().getResource("/org/trisclient/trisclient/style.css").toExternalForm();
             if (css != null) {
                 scene.getStylesheets().add(css);
-                System.out.println(getCurrentTimestamp()+" - Applicazione Principale: CSS applicato."); // Tradotto
+                System.out.println(getCurrentTimestamp()+" - Applicazione Principale: CSS applicato.");
             } else {
-                System.err.println(getCurrentTimestamp()+" - Applicazione Principale: File CSS non trovato!"); // Tradotto
+                System.err.println(getCurrentTimestamp()+" - Applicazione Principale: File CSS non trovato!");
             }
             primaryStage.setScene(scene);
 
             primaryStage.setOnCloseRequest(event -> {
-                System.out.println(getCurrentTimestamp()+" - Applicazione Principale: Richiesta chiusura finestra."); // Tradotto
+                System.out.println(getCurrentTimestamp()+" - Applicazione Principale: Richiesta chiusura finestra.");
                 if (HomePageController.networkServiceInstance != null && HomePageController.networkServiceInstance.isConnected()) {
-                    System.out.println(getCurrentTimestamp()+" - Applicazione Principale: Disconnessione NetworkService per chiusura finestra."); // Tradotto
+                    System.out.println(getCurrentTimestamp()+" - Applicazione Principale: Disconnessione NetworkService per chiusura finestra.");
                     HomePageController.networkServiceInstance.disconnect();
                 }
-                System.out.println(getCurrentTimestamp()+" - Applicazione Principale: Uscita dall'applicazione."); // Tradotto
+                System.out.println(getCurrentTimestamp()+" - Applicazione Principale: Uscita dall'applicazione.");
             });
 
 
             primaryStage.show();
-            System.out.println(getCurrentTimestamp()+" - Applicazione Principale: Stage primario mostrato."); // Tradotto
+            System.out.println(getCurrentTimestamp()+" - Applicazione Principale: Stage primario mostrato.");
         } catch (IOException e) {
-            System.err.println(getCurrentTimestamp()+" - Applicazione Principale: ERRORE FATALE caricamento FXML!"); // Tradotto
+            System.err.println(getCurrentTimestamp()+" - Applicazione Principale: ERRORE FATALE caricamento FXML!");
             e.printStackTrace();
             Platform.exit();
         } catch (Exception e) {
-            System.err.println(getCurrentTimestamp()+" - Applicazione Principale: ERRORE INASPETTATO durante l'avvio!"); // Tradotto
+            System.err.println(getCurrentTimestamp()+" - Applicazione Principale: ERRORE INASPETTATO durante l'avvio!");
             e.printStackTrace();
             Platform.exit();
         }
     }
 
     public static void main(String[] args) {
-        System.out.println("-------------------- Avvio Client Tris --------------------"); // Tradotto
+        System.out.println("-------------------- Avvio Client Tris --------------------");
         launch(args);
-        System.out.println("-------------------- Chiusura Client Tris ---------------------"); // Tradotto
+        System.out.println("-------------------- Chiusura Client Tris ---------------------");
     }
 }

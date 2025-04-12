@@ -9,13 +9,12 @@
 <?import javafx.scene.layout.VBox?>
 <?import javafx.scene.text.Font?>
 
-<AnchorPane prefHeight="400.0" prefWidth="500.0" xmlns="http://javafx.com/javafx/23.0.1" xmlns:fx="http://javafx.com/fxml/1" fx:controller="org.trisclient.trisclient.GameController">
+<AnchorPane prefHeight="450.0" prefWidth="500.0" xmlns="http://javafx.com/javafx/23.0.1" xmlns:fx="http://javafx.com/fxml/1" fx:controller="org.trisclient.trisclient.GameController">
     <children>
         <VBox alignment="CENTER" fillWidth="false" style="-fx-background-color: #ADD8E6;" AnchorPane.bottomAnchor="0.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="0.0" AnchorPane.topAnchor="0.0">
             <children>
                 <VBox alignment="CENTER" fillWidth="false" spacing="20.0">
                     <children>
-                        <!-- Il testo qui è un placeholder, viene impostato dinamicamente -->
                         <Label fx:id="TextTurno" text="Stato Partita">
                             <font>
                                 <Font size="30.0" />
@@ -33,7 +32,6 @@
                                 <RowConstraints minHeight="10.0" prefHeight="30.0" vgrow="SOMETIMES" />
                             </rowConstraints>
                         </GridPane>
-                        <!-- Testo già in Italiano -->
                         <Button fx:id="buttonLeave" mnemonicParsing="false" text="Abbandona partita" onAction="#handleLeaveGame">
                             <font>
                                 <Font size="21.0" />

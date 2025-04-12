@@ -1,4 +1,3 @@
-/* ======== HomePageController.java ======== */
 package org.trisclient.trisclient;
 
 import javafx.application.Platform;
@@ -67,17 +66,17 @@ public class HomePageController implements Initializable, NetworkService.ServerL
             }
 
             if (networkServiceInstance != null && networkServiceInstance.isConnected()) {
-                System.out.println(getCurrentTimestamp() + " - Inizializzazione: Riutilizzo istanza NetworkService connessa esistente."); // Tradotto
+                System.out.println(getCurrentTimestamp() + " - Inizializzazione: Riutilizzo istanza NetworkService connessa esistente.");
                 prepareForReturn(returnReason);
             } else {
-                System.out.println(getCurrentTimestamp() + " - Inizializzazione: NetworkService è null o disconnesso. Necessaria nuova connessione."); // Tradotto
+                System.out.println(getCurrentTimestamp() + " - Inizializzazione: NetworkService è null o disconnesso. Necessaria nuova connessione.");
                 if (networkServiceInstance != null) {
-                    System.out.println(getCurrentTimestamp()+" - Inizializzazione: Pulizia NetworkService disconnesso."); // Tradotto
+                    System.out.println(getCurrentTimestamp()+" - Inizializzazione: Pulizia NetworkService disconnesso.");
                     networkServiceInstance.cleanupExecutor();
                 }
                 networkServiceInstance = null;
 
-                labelStatus.setText("Inserisci il nome per connetterti."); // Tradotto
+                labelStatus.setText("Inserisci il nome per connetterti.");
                 setButtonsDisabled(true);
                 if (flowPanePartite != null) flowPanePartite.getChildren().clear();
 
@@ -90,9 +89,9 @@ public class HomePageController implements Initializable, NetworkService.ServerL
     private void prepareForReturn(String statusMessage) {
         System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): prepareForReturn CHIAMATO con stato: " + statusMessage);
         if (networkServiceInstance == null || !networkServiceInstance.isConnected()) {
-            System.err.println(getCurrentTimestamp()+" - ERRORE in prepareForReturn: NetworkService non valido!"); // Tradotto
+            System.err.println(getCurrentTimestamp()+" - ERRORE in prepareForReturn: NetworkService non valido!");
             Platform.runLater(() -> {
-                labelStatus.setText("Errore: Connessione persa."); // Tradotto
+                labelStatus.setText("Errore: Connessione persa.");
                 setButtonsDisabled(true);
                 if (flowPanePartite != null) flowPanePartite.getChildren().clear();
             });
@@ -103,51 +102,50 @@ public class HomePageController implements Initializable, NetworkService.ServerL
         cachedBoardDuringNavigation = null;
         cachedTurnDuringNavigation.set(false);
 
-        System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): Impostazione listener a QUESTA istanza."); // Tradotto
+        System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): Impostazione listener a QUESTA istanza.");
         networkServiceInstance.setServerListener(this);
 
-        final boolean rematchAccepted = (statusMessage != null && statusMessage.contains("Rivincita accettata")); // Tradotto
+        final boolean rematchAccepted = (statusMessage != null && statusMessage.contains("Rivincita accettata"));
 
         Platform.runLater(() -> {
             String initialStatus;
             if (rematchAccepted) {
-                initialStatus = "In attesa di un nuovo avversario..."; // Tradotto
+                initialStatus = "In attesa di un nuovo avversario...";
             } else if (statusMessage != null && !statusMessage.trim().isEmpty()) {
-                // Traduci i messaggi di ritorno noti
-                String welcomeBack = (staticPlayerName != null ? " Bentornato, " + staticPlayerName + "!" : ""); // Tradotto
+                String welcomeBack = (staticPlayerName != null ? " Bentornato, " + staticPlayerName + "!" : "");
                 if (statusMessage.contains("Partita Terminata") || statusMessage.contains("Avversario disconnesso") ||
                         statusMessage.contains("Rivincita rifiutata") || statusMessage.contains("Avversario ha deciso") ||
                         statusMessage.contains("Nome già preso") || statusMessage.contains("Partita persa")) {
-                    initialStatus = "Ultimo tentativo terminato." + welcomeBack; // Tradotto
-                } else if ("ABBANDONO_VOLONTARIO".equals(statusMessage) || statusMessage.contains("LEFT_")) { // Usa la chiave originale se la usi internamente
-                    initialStatus = "Rientrato nella Lobby." + welcomeBack; // Tradotto
+                    initialStatus = "Ultimo tentativo terminato." + welcomeBack;
+                } else if ("ABBANDONO_VOLONTARIO".equals(statusMessage) || statusMessage.contains("LEFT_")) {
+                    initialStatus = "Rientrato nella Lobby." + welcomeBack;
                 } else if (statusMessage.startsWith("Disconnesso:")) {
-                    initialStatus = "Disconnesso." + welcomeBack; // Usa un messaggio più generico per disconnessioni
+                    initialStatus = "Disconnesso." + welcomeBack;
                 }
                 else {
-                    initialStatus = statusMessage + welcomeBack; // Altri messaggi (potrebbero essere già tradotti o tecnici)
+                    initialStatus = statusMessage + welcomeBack;
                 }
             } else {
-                initialStatus = "Rientrato nella Lobby."+ (staticPlayerName != null ? " Bentornato, " + staticPlayerName + "!" : ""); // Tradotto
+                initialStatus = "Rientrato nella Lobby."+ (staticPlayerName != null ? " Bentornato, " + staticPlayerName + "!" : "");
             }
             labelStatus.setText(initialStatus);
 
 
             if (rematchAccepted) {
-                System.out.println(getCurrentTimestamp()+" - HomePageController: Caso rivincita accettata in prepareForReturn."); // Tradotto
+                System.out.println(getCurrentTimestamp()+" - HomePageController: Caso rivincita accettata in prepareForReturn.");
                 setButtonsDisabled(true);
                 if(buttonCreaPartita != null) buttonCreaPartita.setDisable(true);
                 if(buttonRefresh != null) buttonRefresh.setDisable(true);
                 if (flowPanePartite != null) flowPanePartite.getChildren().clear();
-                Label waitingLabel = new Label("Sei in attesa di un avversario nella tua partita."); // Tradotto
+                Label waitingLabel = new Label("Sei in attesa di un avversario nella tua partita.");
                 if (flowPanePartite != null) flowPanePartite.getChildren().add(waitingLabel);
-                System.out.println(getCurrentTimestamp()+" - HomePageController: Salto richiesta LIST perché il giocatore è IN ATTESA."); // Tradotto
+                System.out.println(getCurrentTimestamp()+" - HomePageController: Salto richiesta LIST perché il giocatore è IN ATTESA.");
 
             } else {
-                System.out.println(getCurrentTimestamp()+" - HomePageController: Caso ritorno normale in prepareForReturn."); // Tradotto
+                System.out.println(getCurrentTimestamp()+" - HomePageController: Caso ritorno normale in prepareForReturn.");
                 setButtonsDisabled(true);
                 if (flowPanePartite != null) flowPanePartite.getChildren().clear();
-                System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): prepareForReturn: Richiesta lista partite."); // Tradotto
+                System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): prepareForReturn: Richiesta lista partite.");
                 networkServiceInstance.sendListRequest();
             }
         });
@@ -158,19 +156,19 @@ public class HomePageController implements Initializable, NetworkService.ServerL
 
         Platform.runLater(() -> {
             if (networkServiceInstance == null) {
-                System.out.println(getCurrentTimestamp()+" - askForNameAndConnect: Creazione nuova istanza NetworkService (era null)."); // Tradotto
+                System.out.println(getCurrentTimestamp()+" - askForNameAndConnect: Creazione nuova istanza NetworkService (era null).");
                 networkServiceInstance = new NetworkService();
             } else if (networkServiceInstance.isConnected()){
-                System.out.println(getCurrentTimestamp()+" - askForNameAndConnect: Già connesso, salto connessione. Richiesto solo nome."); // Tradotto
+                System.out.println(getCurrentTimestamp()+" - askForNameAndConnect: Già connesso, salto connessione. Richiesto solo nome.");
                 showNameDialogAndSend(null);
                 return;
             }
 
-            labelStatus.setText("Inserisci il nome per connetterti:"); // Tradotto
+            labelStatus.setText("Inserisci il nome per connetterti:");
             setButtonsDisabled(true);
             if (flowPanePartite != null) flowPanePartite.getChildren().clear();
 
-            System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): Connessione usando THIS come listener INIZIALE."); // Tradotto
+            System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): Connessione usando THIS come listener INIZIALE.");
             networkServiceInstance.connect("127.0.0.1", 12345, this);
         });
     }
@@ -179,16 +177,15 @@ public class HomePageController implements Initializable, NetworkService.ServerL
         System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): showNameDialogAndSend CHIAMATO. Header: " + headerText);
         Platform.runLater(() -> {
             if (networkServiceInstance == null) {
-                System.err.println("showNameDialogAndSend: Impossibile mostrare dialogo, networkService è null."); // Tradotto
+                System.err.println("showNameDialogAndSend: Impossibile mostrare dialogo, networkService è null.");
                 askForNameAndConnect();
                 return;
             }
 
             TextInputDialog dialog = new TextInputDialog(staticPlayerName != null ? staticPlayerName : "");
-            dialog.setTitle("Inserisci Nome Giocatore"); // Già IT
-            // Header personalizzato o default tradotto
-            dialog.setHeaderText(headerText != null ? headerText : "Inserisci il tuo nome per iniziare:"); // Già IT (default)
-            dialog.setContentText("Nome:"); // Già IT
+            dialog.setTitle("Inserisci Nome Giocatore");
+            dialog.setHeaderText(headerText != null ? headerText : "Inserisci il tuo nome per iniziare:");
+            dialog.setContentText("Nome:");
             Stage owner = getCurrentStage();
             if (owner != null) dialog.initOwner(owner);
 
@@ -196,16 +193,16 @@ public class HomePageController implements Initializable, NetworkService.ServerL
             result.ifPresentOrElse(name -> {
                 String trimmedName = name.trim();
                 if (trimmedName.isEmpty()) {
-                    showNameDialogAndSend("Attenzione, il nome non può essere vuoto. Inseriscine uno valido:"); // Già IT
+                    showNameDialogAndSend("Attenzione, il nome non può essere vuoto. Inseriscine uno valido:");
                 } else {
                     staticPlayerName = trimmedName;
-                    labelStatus.setText("Invio nome '" + staticPlayerName + "'..."); // Tradotto
-                    System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): Invio nome: " + staticPlayerName); // Tradotto
+                    labelStatus.setText("Invio nome '" + staticPlayerName + "'...");
+                    System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): Invio nome: " + staticPlayerName);
                     networkServiceInstance.sendName(staticPlayerName);
                 }
             }, () -> {
-                labelStatus.setText("Inserimento nome annullato. Disconnessione."); // Tradotto
-                System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): Utente ha annullato dialogo nome. Disconnessione."); // Tradotto
+                labelStatus.setText("Inserimento nome annullato. Disconnessione.");
+                System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): Utente ha annullato dialogo nome. Disconnessione.");
                 if(networkServiceInstance != null && networkServiceInstance.isConnected()) {
                     networkServiceInstance.disconnect();
                 }
@@ -218,12 +215,12 @@ public class HomePageController implements Initializable, NetworkService.ServerL
     private void handleCreaPartita() {
         System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): handleCreaPartita CHIAMATO");
         if (networkServiceInstance == null || !networkServiceInstance.isConnected()) {
-            System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): Non connesso. Avvio processo di connessione..."); // Tradotto
+            System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): Non connesso. Avvio processo di connessione...");
             askForNameAndConnect();
             return;
         }
         setButtonsDisabled(true);
-        labelStatus.setText("Creazione partita..."); // Tradotto
+        labelStatus.setText("Creazione partita...");
         disableJoinButtons();
         networkServiceInstance.sendCreateGame();
     }
@@ -234,11 +231,11 @@ public class HomePageController implements Initializable, NetworkService.ServerL
         if (networkServiceInstance != null && networkServiceInstance.isConnected()) {
             setButtonsDisabled(true);
             disableJoinButtons();
-            labelStatus.setText("Aggiornamento lista partite..."); // Tradotto
+            labelStatus.setText("Aggiornamento lista partite...");
             networkServiceInstance.sendListRequest();
         } else {
-            System.err.println(getCurrentTimestamp() + " - HomePageController (" + this.hashCode() + "): Impossibile aggiornare, non connesso."); // Tradotto
-            labelStatus.setText("Non connesso. Impossibile aggiornare."); // Tradotto
+            System.err.println(getCurrentTimestamp() + " - HomePageController (" + this.hashCode() + "): Impossibile aggiornare, non connesso.");
+            labelStatus.setText("Non connesso. Impossibile aggiornare.");
             setButtonsDisabled(true);
         }
     }
@@ -247,7 +244,7 @@ public class HomePageController implements Initializable, NetworkService.ServerL
     public void onConnected() {
         System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onConnected");
         Platform.runLater(() -> {
-            labelStatus.setText("Connesso. In attesa richiesta nome dal server..."); // Tradotto
+            labelStatus.setText("Connesso. In attesa richiesta nome dal server...");
             setButtonsDisabled(true);
         });
     }
@@ -256,19 +253,18 @@ public class HomePageController implements Initializable, NetworkService.ServerL
     public void onNameRequested() {
         System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onNameRequested");
         Platform.runLater(() -> {
-            showNameDialogAndSend(null); // Mostra dialogo iniziale nome
+            showNameDialogAndSend(null);
         });
     }
 
 
     @Override
     public void onNameRejected(String reason) {
-        System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onNameRejected. Motivo: " + reason); // Tradotto
+        System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onNameRejected. Motivo: " + reason);
         Platform.runLater(() -> {
-            // Usa la ragione specifica (se disponibile e tradotta in NetworkService) o un messaggio generico
-            String dialogHeader = "Attenzione, nome già in uso o non valido. Inseriscine un altro:"; // Tradotto
+            String dialogHeader = "Attenzione, nome già in uso o non valido. Inseriscine un altro:";
             if (reason != null && reason.contains("Name already taken")) {
-                dialogHeader = "Attenzione, nome già esistente. Inseriscine un altro:"; // Tradotto specifico
+                dialogHeader = "Attenzione, nome già esistente. Inseriscine un altro:";
             }
             showNameDialogAndSend(dialogHeader);
         });
@@ -279,7 +275,7 @@ public class HomePageController implements Initializable, NetworkService.ServerL
     public void onNameAccepted() {
         System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onNameAccepted");
         Platform.runLater(() -> {
-            labelStatus.setText("Accesso effettuato come " + staticPlayerName + ". Richiesta lista partite..."); // Tradotto
+            labelStatus.setText("Accesso effettuato come " + staticPlayerName + ". Richiesta lista partite...");
             setButtonsDisabled(true);
         });
         networkServiceInstance.sendListRequest();
@@ -287,11 +283,10 @@ public class HomePageController implements Initializable, NetworkService.ServerL
 
     @Override
     public void onDisconnected(String reason) {
-        System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onDisconnected. Motivo: " + reason); // Tradotto
-        lastReturnReason = reason; // Salva motivo originale
+        System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onDisconnected. Motivo: " + reason);
+        lastReturnReason = reason;
 
         Platform.runLater(() -> {
-            // Traduci i motivi comuni per la visualizzazione
             String displayReason = reason;
             if ("VOLUNTARY_LEAVE".equals(reason) || "ABBANDONO_VOLONTARIO".equals(reason)) displayReason = "Abbandono volontario";
             else if ("Disconnected by client".equals(reason)) displayReason = "Disconnesso dal client";
@@ -301,52 +296,47 @@ public class HomePageController implements Initializable, NetworkService.ServerL
             else if (reason.startsWith("Connection error:")) displayReason = "Errore di connessione";
             else if (reason.startsWith("IO error:")) displayReason = "Errore I/O";
 
-            labelStatus.setText("Disconnesso: " + displayReason); // Tradotto
+            labelStatus.setText("Disconnesso: " + displayReason);
             setButtonsDisabled(true);
             if (flowPanePartite != null) flowPanePartite.getChildren().clear();
-            System.out.println(getCurrentTimestamp() + " - GUI: Stato UI disconnesso aggiornato."); // Tradotto
+            System.out.println(getCurrentTimestamp() + " - GUI: Stato UI disconnesso aggiornato.");
 
             boolean voluntaryDisconnect = "ABBANDONO_VOLONTARIO".equals(reason)
                     || "Disconnected by client".equals(reason)
-                    || reason.contains("Rivincita") // "Rematch" in inglese originale
-                    || reason.contains("Avversario ha deciso") // "Opponent decided" originale
+                    || reason.contains("Rivincita")
+                    || reason.contains("Avversario ha deciso")
                     || reason.contains("Name entry cancelled");
             if (!voluntaryDisconnect && !reason.contains("Server is shutting down") && !reason.contains("Server closed connection")) {
-                showError("Disconnesso", "Perdita di connessione inaspettata: " + displayReason); // Tradotto
+                showError("Disconnesso", "Perdita di connessione inaspettata: " + displayReason);
             }
         });
     }
 
-
-    // --- onGamesList() MODIFICATO ---
     @Override
     public void onGamesList(List<NetworkService.GameInfo> games) {
-        System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onGamesList con " + (games != null ? games.size() : 0) + " partite."); // Tradotto, aggiunto check null
+        System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onGamesList con " + (games != null ? games.size() : 0) + " partite.");
 
         Platform.runLater(() -> {
             if (flowPanePartite == null) {
-                System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): FATALE - flowPanePartite è NULL!"); // Tradotto
+                System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): FATALE - flowPanePartite è NULL!");
                 return;
             }
 
-            // ----- BLOCCO MODIFICATO -----
-            boolean amIWaiting = false; // Questo flag indica se IO (questo client) sto aspettando
+            boolean amIWaiting = false;
             int myWaitingGameId = -1;
-            String myStatusIfWaiting = ""; // Salva lo stato della mia partita se sto aspettando
+            String myStatusIfWaiting = "";
 
-            // Determina se il giocatore corrente sta aspettando
             if (games != null && staticPlayerName != null) {
                 for (NetworkService.GameInfo gameInfo : games) {
                     if (gameInfo != null && staticPlayerName.equals(gameInfo.creatorName) && "Waiting".equalsIgnoreCase(gameInfo.state)) {
                         amIWaiting = true;
                         myWaitingGameId = gameInfo.id;
-                        myStatusIfWaiting = gameInfo.state; // Salva lo stato effettivo
+                        myStatusIfWaiting = gameInfo.state;
                         System.out.println("onGamesList: Giocatore '" + staticPlayerName + "' è IN ATTESA (" + myStatusIfWaiting + ") nella partita " + gameInfo.id);
-                        break; // Trovato, non serve continuare
+                        break;
                     }
                 }
             }
-            // ----- FINE BLOCCO MODIFICATO -----
 
             flowPanePartite.getChildren().clear();
             int displayedGamesCount = 0;
@@ -355,10 +345,9 @@ public class HomePageController implements Initializable, NetworkService.ServerL
                 for (NetworkService.GameInfo gameInfo : games) {
                     if (gameInfo == null) continue;
 
-                    // Salta la visualizzazione della PROPRIA partita se si è in attesa
                     boolean isMyWaitingGame = (amIWaiting && gameInfo.id == myWaitingGameId);
                     if (isMyWaitingGame) {
-                        System.out.println("onGamesList: Salto visualizzazione della partita " + gameInfo.id + " perché appartiene al giocatore in attesa."); // Tradotto
+                        System.out.println("onGamesList: Salto visualizzazione della partita " + gameInfo.id + " perché appartiene al giocatore in attesa.");
                         continue;
                     }
 
@@ -367,37 +356,32 @@ public class HomePageController implements Initializable, NetworkService.ServerL
                         Node gameItemNode = loader.load();
                         PartitaItemController controller = loader.getController();
 
-                        // Passa l'ID, creatore, stato, il nome del giocatore loggato E SE IL GIOCATORE STA ASPETTANDO ALTROVE
-                        controller.setData(gameInfo.id, gameInfo.creatorName, gameInfo.state, staticPlayerName, amIWaiting); // <<< Passa amIWaiting
+                        controller.setData(gameInfo.id, gameInfo.creatorName, gameInfo.state, staticPlayerName, amIWaiting);
 
                         flowPanePartite.getChildren().add(gameItemNode);
                         displayedGamesCount++;
                     } catch (Exception e) {
-                        System.err.println(getCurrentTimestamp() + " - Errore caricamento/impostazione PartitaItem: "+e.getMessage()); // Tradotto
+                        System.err.println(getCurrentTimestamp() + " - Errore caricamento/impostazione PartitaItem: "+e.getMessage());
                         e.printStackTrace();
                     }
                 }
             }
 
-            // Aggiungi messaggio se non ci sono partite DA UNIRSI disponibili
             if (displayedGamesCount == 0 && !amIWaiting) {
-                flowPanePartite.getChildren().add(new Label("Nessun'altra partita disponibile a cui unirsi.")); // Tradotto
+                flowPanePartite.getChildren().add(new Label("Nessun'altra partita disponibile a cui unirsi."));
             } else if (displayedGamesCount == 0 && amIWaiting) {
-                flowPanePartite.getChildren().add(new Label("Sei in attesa di un avversario...")); // Messaggio se stai aspettando e non ci sono altre partite
+                flowPanePartite.getChildren().add(new Label("Sei in attesa di un avversario..."));
             }
 
-
-            // Aggiorna lo stato generale dell'UI e dei bottoni
             boolean isConnected = (networkServiceInstance != null && networkServiceInstance.isConnected());
             if(isConnected){
                 if(buttonRefresh != null) buttonRefresh.setDisable(false);
 
                 if (amIWaiting) {
                     if(buttonCreaPartita != null) buttonCreaPartita.setDisable(true);
-                    labelStatus.setText("In attesa di avversario per partita " + (myWaitingGameId > 0 ? myWaitingGameId : "") + "..."); // Tradotto
+                    labelStatus.setText("In attesa di avversario per partita " + (myWaitingGameId > 0 ? myWaitingGameId : "") + "...");
                 } else {
                     if(buttonCreaPartita != null) buttonCreaPartita.setDisable(false);
-                    // Mostra numero partite DISPONIBILI (quelle non create da noi e in waiting)
                     int joinableGames = 0;
                     if(games != null){
                         for(NetworkService.GameInfo gi : games){
@@ -406,15 +390,14 @@ public class HomePageController implements Initializable, NetworkService.ServerL
                             }
                         }
                     }
-                    // Non sovrascrivere messaggi di ritorno importanti
                     if (labelStatus.getText() == null || labelStatus.getText().isEmpty() || labelStatus.getText().startsWith("Accesso come") || labelStatus.getText().startsWith("Logged in") || labelStatus.getText().startsWith("Aggiornamento")) {
-                        labelStatus.setText("Accesso come " + staticPlayerName + ". Partite a cui unirsi: " + joinableGames); // Tradotto e usa conteggio joinable
+                        labelStatus.setText("Accesso come " + staticPlayerName + ". Partite a cui unirsi: " + joinableGames);
                     }
                 }
             } else {
                 if(buttonCreaPartita != null) buttonCreaPartita.setDisable(true);
                 if(buttonRefresh != null) buttonRefresh.setDisable(true);
-                if(labelStatus!=null && !labelStatus.getText().startsWith("Disconnesso")) labelStatus.setText("Disconnesso."); // Tradotto
+                if(labelStatus!=null && !labelStatus.getText().startsWith("Disconnesso")) labelStatus.setText("Disconnesso.");
                 disableJoinButtons();
             }
         });
@@ -424,7 +407,7 @@ public class HomePageController implements Initializable, NetworkService.ServerL
     public void onGameCreated(int gameId) {
         System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onGameCreated per partita " + gameId);
         Platform.runLater(() -> {
-            labelStatus.setText("Partita " + gameId + " creata. In attesa dell'avversario..."); // Tradotto
+            labelStatus.setText("Partita " + gameId + " creata. In attesa dell'avversario...");
             setButtonsDisabled(true);
             disableJoinButtons();
             handleRefresh();
@@ -435,7 +418,7 @@ public class HomePageController implements Initializable, NetworkService.ServerL
     public void onJoinRequestSent(int gameId) {
         System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onJoinRequestSent per partita " + gameId);
         Platform.runLater(() -> {
-            labelStatus.setText("Richiesta inviata per la partita " + gameId + ". In attesa di approvazione..."); // Tradotto
+            labelStatus.setText("Richiesta inviata per la partita " + gameId + ". In attesa di approvazione...");
             setButtonsDisabled(true);
             disableJoinButtons();
         });
@@ -448,11 +431,11 @@ public class HomePageController implements Initializable, NetworkService.ServerL
             if (networkServiceInstance == null || !networkServiceInstance.isConnected()) return;
 
             Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
-            alert.setTitle("Richiesta di Partecipazione"); // Tradotto
-            alert.setHeaderText("Il giocatore '" + requesterName + "' vuole unirsi alla tua partita."); // Tradotto
-            alert.setContentText("Vuoi accettare?"); // Tradotto
-            ButtonType buttonTypeAccept = new ButtonType("Accetta"); // Tradotto
-            ButtonType buttonTypeReject = new ButtonType("Rifiuta"); // Tradotto
+            alert.setTitle("Richiesta di Partecipazione");
+            alert.setHeaderText("Il giocatore '" + requesterName + "' vuole unirsi alla tua partita.");
+            alert.setContentText("Vuoi accettare?");
+            ButtonType buttonTypeAccept = new ButtonType("Accetta");
+            ButtonType buttonTypeReject = new ButtonType("Rifiuta");
             alert.getButtonTypes().setAll(buttonTypeAccept, buttonTypeReject);
             Stage owner = getCurrentStage();
             if (owner != null) alert.initOwner(owner);
@@ -462,8 +445,7 @@ public class HomePageController implements Initializable, NetworkService.ServerL
             if (result.isPresent() && result.get() == buttonTypeAccept) {
                 decision = "Accept";
             }
-            // Traduci stato
-            String statusUpdate = (decision.equals("Accept") ? "Accettazione" : "Rifiuto") + " di " + requesterName + "..."; // Tradotto
+            String statusUpdate = (decision.equals("Accept") ? "Accettazione" : "Rifiuto") + " di " + requesterName + "...";
             labelStatus.setText(statusUpdate);
             if("Accept".equals(decision)) networkServiceInstance.sendAcceptRequest(requesterName);
             else networkServiceInstance.sendRejectRequest(requesterName);
@@ -474,7 +456,7 @@ public class HomePageController implements Initializable, NetworkService.ServerL
     public void onJoinAccepted(int gameId, char symbol, String opponentName) {
         System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onJoinAccepted per partita " + gameId);
         Platform.runLater(() -> {
-            labelStatus.setText("Richiesta di partecipazione ACCETTATA! Avvio partita " + gameId + "..."); // Tradotto
+            labelStatus.setText("Richiesta di partecipazione ACCETTATA! Avvio partita " + gameId + "...");
         });
     }
 
@@ -482,8 +464,8 @@ public class HomePageController implements Initializable, NetworkService.ServerL
     public void onJoinRejected(int gameId, String creatorName) {
         System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onJoinRejected per partita " + gameId);
         Platform.runLater(() -> {
-            showError("Partecipazione Rifiutata", "Richiesta di unirsi alla partita " + gameId + " rifiutata da " + creatorName + "."); // Tradotto
-            labelStatus.setText("Richiesta di partecipazione alla partita " + gameId + " rifiutata."); // Tradotto
+            showError("Partecipazione Rifiutata", "Richiesta di unirsi alla partita " + gameId + " rifiutata da " + creatorName + ".");
+            labelStatus.setText("Richiesta di partecipazione alla partita " + gameId + " rifiutata.");
             boolean isConnected = (networkServiceInstance != null && networkServiceInstance.isConnected());
             setButtonsDisabled(!isConnected);
             handleRefresh();
@@ -494,20 +476,17 @@ public class HomePageController implements Initializable, NetworkService.ServerL
     public void onActionConfirmed(String message) {
         System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onActionConfirmed: " + message);
         Platform.runLater(() -> {
-            // Traduci il messaggio se necessario (supponendo che il server invii "Rejected request from ...")
             String displayMessage = message;
             if (message.startsWith("Rejected request from")) {
-                displayMessage = "Richiesta rifiutata da " + message.substring("Rejected request from".length()).trim(); // Tradotto
-                labelStatus.setText(displayMessage + ". Ancora in attesa..."); // Tradotto
+                displayMessage = "Richiesta rifiutata da " + message.substring("Rejected request from".length()).trim();
+                labelStatus.setText(displayMessage + ". Ancora in attesa...");
                 setButtonsDisabled(true);
                 handleRefresh();
-                System.out.println("onActionConfirmed: Utente ha rifiutato giocatore, rimango in stato ATTESA."); // Tradotto
+                System.out.println("onActionConfirmed: Utente ha rifiutato giocatore, rimango in stato ATTESA.");
             } else if (message.startsWith("QUIT_OK")) {
-                // Non mostrare nulla o un messaggio generico
                 // labelStatus.setText("Azione confermata.");
             } else {
-                // Messaggio sconosciuto, mostralo com'è o loggalo
-                System.out.println("Azione confermata non gestita: " + message); // Tradotto
+                System.out.println("Azione confermata non gestita: " + message);
                 // labelStatus.setText("Azione confermata: " + message);
             }
         });
@@ -518,15 +497,13 @@ public class HomePageController implements Initializable, NetworkService.ServerL
     public void onGameStart(int gameId, char symbol, String opponentName) {
         System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onGameStart ricevuto per partita " + gameId);
         lastReturnReason = null;
-        Platform.runLater(() -> labelStatus.setText("Partita " + gameId + " in avvio...")); // Tradotto
+        Platform.runLater(() -> labelStatus.setText("Partita " + gameId + " in avvio..."));
         isNavigatingToGame.set(true);
         cachedBoardDuringNavigation = null;
         cachedTurnDuringNavigation.set(false);
         navigateToGameScreen(gameId, symbol, opponentName);
     }
 
-
-    // Listener non chiamati qui - Log tradotti
     @Override public void onBoardUpdate(String[] board) { if (isNavigatingToGame.get()) cachedBoardDuringNavigation = board; else System.err.println(getCurrentTimestamp()+" - HomePage: !!! Inaspettato onBoardUpdate !!! Board: "+Arrays.toString(board)); }
     @Override public void onYourTurn() { if (isNavigatingToGame.get()) cachedTurnDuringNavigation.set(true); else System.err.println(getCurrentTimestamp()+" - HomePage: !!! Inaspettato onYourTurn !!!"); }
     @Override public void onGameOver(String result) { System.err.println(getCurrentTimestamp()+" - HomePage: !!! Inaspettato onGameOver("+result+") !!!"); }
@@ -542,22 +519,22 @@ public class HomePageController implements Initializable, NetworkService.ServerL
     public void onError(String message) {
         System.err.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onError: " + message + " | isNavigating="+isNavigatingToGame.get());
         Platform.runLater(() -> {
-            showError("Errore del Server", message); // Tradotto
+            showError("Errore del Server", message);
 
             if (isNavigatingToGame.compareAndSet(true, false)) {
-                System.err.println(getCurrentTimestamp() + " - HomePage: Errore durante navigazione partita. Annullamento."); // Tradotto
-                if(labelStatus!=null) labelStatus.setText("Errore avvio partita: " + message); // Tradotto
+                System.err.println(getCurrentTimestamp() + " - HomePage: Errore durante navigazione partita. Annullamento.");
+                if(labelStatus!=null) labelStatus.setText("Errore avvio partita: " + message);
                 boolean stillConnected = (networkServiceInstance != null && networkServiceInstance.isConnected());
                 setButtonsDisabled(!stillConnected);
                 if(stillConnected) handleRefresh();
                 return;
             }
 
-            if(labelStatus != null) labelStatus.setText("Errore: " + message); // Tradotto
+            if(labelStatus != null) labelStatus.setText("Errore: " + message);
 
             boolean stillConnected = (networkServiceInstance != null && networkServiceInstance.isConnected());
             setButtonsDisabled(!stillConnected);
-            if(stillConnected && !message.contains("Server is shutting down") && !message.contains("full") && !message.contains("Server si sta spegnendo")){ // Tradotto
+            if(stillConnected && !message.contains("Server is shutting down") && !message.contains("full") && !message.contains("Server si sta spegnendo")){
                 handleRefresh();
             }
         });
@@ -569,9 +546,9 @@ public class HomePageController implements Initializable, NetworkService.ServerL
 
         Platform.runLater(() -> {
             try {
-                System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): returnToHomePage (runLater) START per motivo: " + lastReturnReason); // Tradotto
+                System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): returnToHomePage (runLater) START per motivo: " + lastReturnReason);
                 Stage stageToUse = getCurrentStage();
-                if (stageToUse == null) throw new IOException("Stage è NULL, impossibile tornare alla home!"); // Tradotto
+                if (stageToUse == null) throw new IOException("Stage è NULL, impossibile tornare alla home!");
 
                 FXMLLoader loader = new FXMLLoader(getClass().getResource("/org/trisclient/trisclient/home-page-view.fxml"));
                 Parent homeRoot = loader.load();
@@ -581,14 +558,14 @@ public class HomePageController implements Initializable, NetworkService.ServerL
                 if (scene == null) { scene = new Scene(homeRoot); stageToUse.setScene(scene); }
                 else { scene.setRoot(homeRoot); }
 
-                stageToUse.setTitle("Tris - Lobby"); // Già IT
+                stageToUse.setTitle("Tris - Lobby");
                 stageToUse.show();
-                System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): returnToHomePage (runLater) END. Stage mostra Home View."); // Tradotto
+                System.out.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): returnToHomePage (runLater) END. Stage mostra Home View.");
 
             } catch (Exception e) {
-                System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): !!! ECCEZIONE CRITICA durante returnToHomePage !!!"); // Tradotto
+                System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): !!! ECCEZIONE CRITICA durante returnToHomePage !!!");
                 e.printStackTrace();
-                showError("Errore Critico UI", "Impossibile tornare alla Home Page.\n" + e.getMessage()); // Tradotto
+                showError("Errore Critico UI", "Impossibile tornare alla Home Page.\n" + e.getMessage());
                 Platform.exit();
             }
         });
@@ -603,7 +580,7 @@ public class HomePageController implements Initializable, NetworkService.ServerL
 
             try {
                 Stage stageToUse = getCurrentStage();
-                if (stageToUse == null) throw new IOException("Impossibile navigare: Stage non trovato!"); // Tradotto
+                if (stageToUse == null) throw new IOException("Impossibile navigare: Stage non trovato!");
 
                 FXMLLoader loader = new FXMLLoader(getClass().getResource("/org/trisclient/trisclient/game-view.fxml"));
                 Parent gameRoot = loader.load();
@@ -616,19 +593,19 @@ public class HomePageController implements Initializable, NetworkService.ServerL
                 if (scene == null) { scene = new Scene(gameRoot); stageToUse.setScene(scene); }
                 else { scene.setRoot(gameRoot); }
 
-                stageToUse.setTitle("Tris - Partita " + gameId + " vs " + opponentName); // Tradotto
+                stageToUse.setTitle("Tris - Partita " + gameId + " vs " + opponentName);
                 stageToUse.show();
-                System.out.println(getCurrentTimestamp()+" - HomePage Nav: Stage mostra Game View."); // Tradotto
+                System.out.println(getCurrentTimestamp()+" - HomePage Nav: Stage mostra Game View.");
                 isNavigatingToGame.set(false);
 
             } catch (Exception e) {
-                System.err.println(getCurrentTimestamp()+" - HomePage Nav: !!! ECCEZIONE navigando alla schermata di gioco !!!"); // Tradotto
+                System.err.println(getCurrentTimestamp()+" - HomePage Nav: !!! ECCEZIONE navigando alla schermata di gioco !!!");
                 e.printStackTrace();
-                showError("Errore Critico UI", "Impossibile caricare la schermata di gioco.\n" + e.getMessage()); // Tradotto
+                showError("Errore Critico UI", "Impossibile caricare la schermata di gioco.\n" + e.getMessage());
                 isNavigatingToGame.set(false);
                 setButtonsDisabled(!(networkServiceInstance != null && networkServiceInstance.isConnected()));
                 handleRefresh();
-                if(labelStatus != null) labelStatus.setText("Errore caricamento partita."); // Tradotto
+                if(labelStatus != null) labelStatus.setText("Errore caricamento partita.");
             }
         });
     }
@@ -640,7 +617,7 @@ public class HomePageController implements Initializable, NetworkService.ServerL
             alert.setTitle(title); alert.setHeaderText(null); alert.setContentText(content);
             Stage owner = getCurrentStage(); if(owner != null) alert.initOwner(owner);
             alert.showAndWait();
-        } catch (Exception e) { System.err.println("Errore mostrando alert ERRORE: "+e.getMessage()); } // Tradotto
+        } catch (Exception e) { System.err.println("Errore mostrando alert ERRORE: "+e.getMessage()); }
     }
 
     private void disableJoinButtons() {
@@ -675,7 +652,7 @@ public class HomePageController implements Initializable, NetworkService.ServerL
             }
             return getCurrentStageFallback();
         } catch (Exception e) {
-            System.err.println("Eccezione ottenendo stage corrente: " + e.getMessage()); // Tradotto
+            System.err.println("Eccezione ottenendo stage corrente: " + e.getMessage());
             return null;
         }
     }
@@ -689,4 +666,4 @@ public class HomePageController implements Initializable, NetworkService.ServerL
                 .orElse(null);
     }
 
-} // Fine classe HomePageController
+}
