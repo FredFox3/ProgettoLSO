@@ -318,18 +318,35 @@ public class HomePageController implements Initializable, NetworkService.ServerL
     }
 
 
+    // --- onGamesList() MODIFICATO ---
     @Override
     public void onGamesList(List<NetworkService.GameInfo> games) {
-        System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onGamesList con " + games.size() + " partite."); // Tradotto
+        System.out.println(getCurrentTimestamp() + " - HomePageController ("+this.hashCode()+"): GUI: onGamesList con " + (games != null ? games.size() : 0) + " partite."); // Tradotto, aggiunto check null
 
         Platform.runLater(() -> {
             if (flowPanePartite == null) {
-                System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): FATALE - flowPanePartite è NULL!");
+                System.err.println(getCurrentTimestamp()+" - HomePageController ("+this.hashCode()+"): FATALE - flowPanePartite è NULL!"); // Tradotto
                 return;
             }
 
-            boolean amIWaiting = false;
+            // ----- BLOCCO MODIFICATO -----
+            boolean amIWaiting = false; // Questo flag indica se IO (questo client) sto aspettando
             int myWaitingGameId = -1;
+            String myStatusIfWaiting = ""; // Salva lo stato della mia partita se sto aspettando
+
+            // Determina se il giocatore corrente sta aspettando
+            if (games != null && staticPlayerName != null) {
+                for (NetworkService.GameInfo gameInfo : games) {
+                    if (gameInfo != null && staticPlayerName.equals(gameInfo.creatorName) && "Waiting".equalsIgnoreCase(gameInfo.state)) {
+                        amIWaiting = true;
+                        myWaitingGameId = gameInfo.id;
+                        myStatusIfWaiting = gameInfo.state; // Salva lo stato effettivo
+                        System.out.println("onGamesList: Giocatore '" + staticPlayerName + "' è IN ATTESA (" + myStatusIfWaiting + ") nella partita " + gameInfo.id);
+                        break; // Trovato, non serve continuare
+                    }
+                }
+            }
+            // ----- FINE BLOCCO MODIFICATO -----
 
             flowPanePartite.getChildren().clear();
             int displayedGamesCount = 0;
@@ -338,15 +355,10 @@ public class HomePageController implements Initializable, NetworkService.ServerL
                 for (NetworkService.GameInfo gameInfo : games) {
                     if (gameInfo == null) continue;
 
-                    // Lo stato "Waiting" viene dal server, non tradurlo qui a meno che il server non lo invii tradotto
-                    boolean isMyWaitingGame = staticPlayerName != null &&
-                            staticPlayerName.equals(gameInfo.creatorName) &&
-                            "Waiting".equalsIgnoreCase(gameInfo.state);
-
+                    // Salta la visualizzazione della PROPRIA partita se si è in attesa
+                    boolean isMyWaitingGame = (amIWaiting && gameInfo.id == myWaitingGameId);
                     if (isMyWaitingGame) {
-                        amIWaiting = true;
-                        myWaitingGameId = gameInfo.id;
-                        System.out.println("onGamesList: Giocatore '" + staticPlayerName + "' è IN ATTESA nella partita " + gameInfo.id + ". Salto visualizzazione."); // Tradotto
+                        System.out.println("onGamesList: Salto visualizzazione della partita " + gameInfo.id + " perché appartiene al giocatore in attesa."); // Tradotto
                         continue;
                     }
 
@@ -354,8 +366,10 @@ public class HomePageController implements Initializable, NetworkService.ServerL
                         FXMLLoader loader = new FXMLLoader(getClass().getResource("/org/trisclient/trisclient/partita-item-view.fxml"));
                         Node gameItemNode = loader.load();
                         PartitaItemController controller = loader.getController();
-                        // Passa lo stato come ricevuto dal server
-                        controller.setData(gameInfo.id, gameInfo.creatorName, gameInfo.state, staticPlayerName);
+
+                        // Passa l'ID, creatore, stato, il nome del giocatore loggato E SE IL GIOCATORE STA ASPETTANDO ALTROVE
+                        controller.setData(gameInfo.id, gameInfo.creatorName, gameInfo.state, staticPlayerName, amIWaiting); // <<< Passa amIWaiting
+
                         flowPanePartite.getChildren().add(gameItemNode);
                         displayedGamesCount++;
                     } catch (Exception e) {
@@ -365,21 +379,36 @@ public class HomePageController implements Initializable, NetworkService.ServerL
                 }
             }
 
+            // Aggiungi messaggio se non ci sono partite DA UNIRSI disponibili
             if (displayedGamesCount == 0 && !amIWaiting) {
-                flowPanePartite.getChildren().add(new Label("Nessun'altra partita disponibile.")); // Tradotto
+                flowPanePartite.getChildren().add(new Label("Nessun'altra partita disponibile a cui unirsi.")); // Tradotto
+            } else if (displayedGamesCount == 0 && amIWaiting) {
+                flowPanePartite.getChildren().add(new Label("Sei in attesa di un avversario...")); // Messaggio se stai aspettando e non ci sono altre partite
             }
 
+
+            // Aggiorna lo stato generale dell'UI e dei bottoni
             boolean isConnected = (networkServiceInstance != null && networkServiceInstance.isConnected());
             if(isConnected){
                 if(buttonRefresh != null) buttonRefresh.setDisable(false);
 
                 if (amIWaiting) {
                     if(buttonCreaPartita != null) buttonCreaPartita.setDisable(true);
-                    labelStatus.setText("In attesa dell'avversario nella tua partita " + (myWaitingGameId > 0 ? myWaitingGameId : "") + "..."); // Tradotto
+                    labelStatus.setText("In attesa di avversario per partita " + (myWaitingGameId > 0 ? myWaitingGameId : "") + "..."); // Tradotto
                 } else {
                     if(buttonCreaPartita != null) buttonCreaPartita.setDisable(false);
-                    if (labelStatus.getText() == null || !labelStatus.getText().startsWith("Accesso effettuato")) { // Tradotto
-                        labelStatus.setText("Accesso effettuato come " + staticPlayerName + ". Partite disponibili: " + displayedGamesCount); // Tradotto
+                    // Mostra numero partite DISPONIBILI (quelle non create da noi e in waiting)
+                    int joinableGames = 0;
+                    if(games != null){
+                        for(NetworkService.GameInfo gi : games){
+                            if(gi != null && "Waiting".equalsIgnoreCase(gi.state) && (staticPlayerName == null || !staticPlayerName.equals(gi.creatorName))){
+                                joinableGames++;
+                            }
+                        }
+                    }
+                    // Non sovrascrivere messaggi di ritorno importanti
+                    if (labelStatus.getText() == null || labelStatus.getText().isEmpty() || labelStatus.getText().startsWith("Accesso come") || labelStatus.getText().startsWith("Logged in") || labelStatus.getText().startsWith("Aggiornamento")) {
+                        labelStatus.setText("Accesso come " + staticPlayerName + ". Partite a cui unirsi: " + joinableGames); // Tradotto e usa conteggio joinable
                     }
                 }
             } else {

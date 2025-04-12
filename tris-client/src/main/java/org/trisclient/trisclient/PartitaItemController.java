@@ -26,7 +26,7 @@ public class PartitaItemController {
         return LocalDateTime.now().format(TIMESTAMP_FORMATTER);
     }
 
-    public void setData(int gameId, String creatorName, String state, String loggedInPlayerName) {
+    public void setData(int gameId, String creatorName, String state, String loggedInPlayerName, boolean isPlayerAlreadyWaiting) {
         this.gameId = gameId;
         this.creatorName = creatorName;
 
@@ -35,25 +35,25 @@ public class PartitaItemController {
                 labelNumeroPartita.setText("Partita " + gameId + "\n(di " + (creatorName != null ? creatorName : "?") + ")"); // Tradotto
             }
             if (labelStatoPartita != null) {
-                // Traduci gli stati comuni QUI per la visualizzazione, mantenendo l'originale internamente se necessario
-                String displayState = state;
-                if ("Waiting".equalsIgnoreCase(state)) displayState = "In attesa"; // Tradotto
-                else if ("In Progress".equalsIgnoreCase(state)) displayState = "In corso"; // Tradotto
-                else if ("Finished".equalsIgnoreCase(state)) displayState = "Terminata"; // Tradotto
-                else displayState = (state != null ? state : "N/D"); // N/D per Non Definito/Disponibile // Tradotto
-
-                labelStatoPartita.setText(displayState);
-                updateStateStyle(state); // Passa lo stato originale per lo stile CSS
+                labelStatoPartita.setText(state != null ? state : "N/A");
+                updateStateStyle(state);
             }
             if (buttonUniscitiPartita != null) {
-                boolean shouldBeDisabled = true;
-                // Usa lo stato originale per la logica
-                if ("Waiting".equalsIgnoreCase(state)) {
-                    if (loggedInPlayerName != null && !loggedInPlayerName.equals(creatorName)) {
-                        shouldBeDisabled = false;
-                    }
-                }
+                // ----- LOGICA DISABILITAZIONE MODIFICATA -----
+                boolean isMyOwnGame = loggedInPlayerName != null && loggedInPlayerName.equals(this.creatorName);
+                boolean canJoinThisState = "Waiting".equalsIgnoreCase(state);
+
+                // Disabilita se:
+                // 1. Il giocatore loggato STA GIA' ASPETTANDO in un'altra partita (isPlayerAlreadyWaiting), OPPURE
+                // 2. Questo item rappresenta la PROPRIA partita (isMyOwnGame), OPPURE
+                // 3. Lo stato di QUESTA partita non è "Waiting" (!canJoinThisState)
+                boolean shouldBeDisabled = isPlayerAlreadyWaiting || isMyOwnGame || !canJoinThisState;
+
                 buttonUniscitiPartita.setDisable(shouldBeDisabled);
+                // Log di debug per capire perché viene disabilitato
+                // System.out.println("Impostazione bottone Unisciti per partita "+gameId+": Disabilitato="+shouldBeDisabled +
+                //                    " (isPlayerAlreadyWaiting="+isPlayerAlreadyWaiting+", isMyOwnGame="+isMyOwnGame+", canJoinThisState="+canJoinThisState+")");
+                // ----- FINE LOGICA DISABILITAZIONE MODIFICATA -----
             }
         });
     }
