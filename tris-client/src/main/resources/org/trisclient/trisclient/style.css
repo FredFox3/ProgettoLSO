@@ -1,26 +1,11 @@
-/* styles.css o come lo hai chiamato */
-
-.root {
-    /* Stili generali se ne hai */
-}
-
-.label {
-    /* Stili generali per le label se ne hai */
-}
-
-.button {
-    /* Stili generali per i bottoni se ne hai */
-}
-
-/* Stili specifici per lo stato della partita */
 .state-waiting {
-    -fx-text-fill: orange;
+    -fx-text-fill: #2ECC71;
     -fx-font-weight: bold;
     -fx-font-style: italic;
 }
 
 .state-inprogress {
-    -fx-text-fill: #2ECC71;
+    -fx-text-fill: orange;
     -fx-font-weight: bold;
     -fx-font-style: italic;
 }

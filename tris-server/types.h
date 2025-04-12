@@ -9,7 +9,7 @@
 #define PORT 12345
 #define BUFFER_SIZE 1024
 #define MAX_TOTAL_CLIENTS 10
-#define MAX_GAMES 5
+#define MAX_GAMES 10
 #define MAX_NAME_LEN 32
 
 typedef enum {

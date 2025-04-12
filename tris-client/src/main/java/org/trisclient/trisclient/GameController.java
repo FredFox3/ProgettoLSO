@@ -328,19 +328,19 @@ public class GameController implements Initializable, NetworkService.ServerListe
         opponentDeclinedWhileWaiting.set(false);
 
         boolean showPopup = false;
-        String alertTitle = "Info Rivincita";
+        String alertTitle = "Info Rivincita.";
         String alertContent = "Ritorno alla lobby.";
-        String returnReason = "Rivincita rifiutata";
+        String returnReason = "Rivincita rifiutata.";
 
         if ("LOSE".equalsIgnoreCase(lastGameResult)) {
-            alertTitle = "Partita Terminata";
+            alertTitle = "Partita Terminata.";
             alertContent = "Partita persa.\nRitorno alla lobby.";
-            returnReason = "Partita persa";
+            returnReason = "Partita persa.";
             showPopup = true;
         } else if (wasWaiting && "DRAW".equalsIgnoreCase(lastGameResult)) {
-            alertTitle = "Rivincita Annullata";
+            alertTitle = "Rivincita Annullata.";
             alertContent = "Ritorno alla lobby.";
-            returnReason = "Avversario ha rifiutato prima";
+            returnReason = "La rivincita è stata rifiutata.";
             showPopup = true;
         }
 

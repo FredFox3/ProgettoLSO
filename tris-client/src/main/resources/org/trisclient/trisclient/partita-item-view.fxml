@@ -6,22 +6,21 @@
 <?import javafx.scene.layout.VBox?>
 <?import javafx.scene.text.Font?>
 
-
-<AnchorPane prefHeight="150.0" prefWidth="150.0" style="-fx-border-color: black; -fx-border-radius: 10px;" xmlns="http://javafx.com/javafx/23.0.1" xmlns:fx="http://javafx.com/fxml/1" fx:controller="org.trisclient.trisclient.PartitaItemController">
+<AnchorPane prefHeight="150.0" prefWidth="150.0" style="-fx-border-color: #424242; -fx-border-radius: 10px;" xmlns="http://javafx.com/javafx/23.0.1" xmlns:fx="http://javafx.com/fxml/1" fx:controller="org.trisclient.trisclient.PartitaItemController">
    <children>
-      <VBox alignment="CENTER" prefHeight="150.0" prefWidth="150.0" spacing="30.0">
+      <VBox alignment="CENTER" prefHeight="150.0" prefWidth="150.0" spacing="20.0">
          <children>
             <Label fx:id="labelNumeroPartita" text="Partita #">
                <font>
                   <Font size="15.0" />
                </font>
             </Label>
-            <Label fx:id="labelStatoPartita" text="Stato" style="-fx-font-style: italic;">
+            <Label fx:id="labelStatoPartita" style="-fx-font-style: italic;" text="Stato">
                <font>
                   <Font size="15.0" />
                </font>
             </Label>
-            <Button fx:id="buttonUniscitiPartita" mnemonicParsing="false" text="Unisciti" onAction="#handleUniscitiPartita">
+            <Button fx:id="buttonUniscitiPartita" mnemonicParsing="false" onAction="#handleUniscitiPartita" text="Unisciti">
                <font>
                   <Font size="15.0" />
                </font>

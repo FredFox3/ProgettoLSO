@@ -35,7 +35,19 @@ public class PartitaItemController {
                 labelNumeroPartita.setText("Partita " + gameId + "\n(di " + (creatorName != null ? creatorName : "?") + ")");
             }
             if (labelStatoPartita != null) {
-                labelStatoPartita.setText(state != null ? state : "N/A");
+                switch (state) {
+                    case "Waiting":
+                        labelStatoPartita.setText("In attesa");
+                        break;
+                    case "In Progress":
+                        labelStatoPartita.setText("In corso");
+                        break;
+                    case "Finished":
+                        labelStatoPartita.setText("Terminata");
+                        break;
+                    default:
+                        labelStatoPartita.setText("");
+                }
                 updateStateStyle(state);
             }
             if (buttonUniscitiPartita != null) {

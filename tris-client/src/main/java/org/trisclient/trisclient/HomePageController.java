@@ -116,7 +116,7 @@ public class HomePageController implements Initializable, NetworkService.ServerL
                 if (statusMessage.contains("Partita Terminata") || statusMessage.contains("Avversario disconnesso") ||
                         statusMessage.contains("Rivincita rifiutata") || statusMessage.contains("Avversario ha deciso") ||
                         statusMessage.contains("Nome già preso") || statusMessage.contains("Partita persa")) {
-                    initialStatus = "Ultimo tentativo terminato." + welcomeBack;
+                    initialStatus = "Partita terminata." + welcomeBack;
                 } else if ("ABBANDONO_VOLONTARIO".equals(statusMessage) || statusMessage.contains("LEFT_")) {
                     initialStatus = "Rientrato nella Lobby." + welcomeBack;
                 } else if (statusMessage.startsWith("Disconnesso:")) {
@@ -484,10 +484,8 @@ public class HomePageController implements Initializable, NetworkService.ServerL
                 handleRefresh();
                 System.out.println("onActionConfirmed: Utente ha rifiutato giocatore, rimango in stato ATTESA.");
             } else if (message.startsWith("QUIT_OK")) {
-                // labelStatus.setText("Azione confermata.");
             } else {
                 System.out.println("Azione confermata non gestita: " + message);
-                // labelStatus.setText("Azione confermata: " + message);
             }
         });
     }
