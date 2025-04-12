@@ -8,10 +8,9 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include <errno.h>
-#include <sys/socket.h> // Per send, MSG_NOSIGNAL
-#include <stdbool.h>    // Per bool nel prototipo send_to_client
+#include <sys/socket.h>
+#include <stdbool.h>
 
-// --- Macro per Logging ---
 void get_timestamp(char *buffer, size_t len);
 
 #define LOG(...) do { \
@@ -30,16 +29,6 @@ void get_timestamp(char *buffer, size_t len);
     perror(msg); \
 } while(0)
 
-// --- Funzioni di Utilità ---
-
-/**
- * @brief Invia un messaggio a un client in modo sicuro.
- * Gestisce EPIPE e altri errori comuni, loggando eventuali problemi.
- * @param client_fd File descriptor del client.
- * @param message Messaggio da inviare (stringa C null-terminated).
- * @return true se l'invio è andato a buon fine (o il client era già disconnesso),
- *         false se si è verificato un errore critico di invio.
- */
 bool send_to_client(int client_fd, const char* message);
 
-#endif // UTILS_H
+#endif
