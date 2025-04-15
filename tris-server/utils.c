@@ -13,7 +13,6 @@ void get_timestamp(char *buffer, size_t len) {
 
 bool send_to_client(int client_fd, const char* message) {
     if (client_fd < 0) {
-
         return true;
     }
     if (!message) {

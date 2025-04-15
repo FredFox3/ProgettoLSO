@@ -15,14 +15,9 @@
 #include <pthread.h>
 
 void handle_signal(int signal) {
-
     char msg[] = "\nSegnale ricevuto, avvio spegnimento...\n";
     write(STDOUT_FILENO, msg, strlen(msg));
     keep_running = 0;
-
-    if (server_fd != -1) {
-
-    }
 }
 
 void cleanup_server() {
