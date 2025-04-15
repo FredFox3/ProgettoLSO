@@ -7,4 +7,4 @@ typedef void *(*PTHREAD_FUNC)(void *);
 
 void *handle_client(void *arg);
 
-#endif // CLIENT_HANDLER_H
+#endif
