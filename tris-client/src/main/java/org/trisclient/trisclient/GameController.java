@@ -10,7 +10,6 @@ import javafx.scene.control.Label;
 import javafx.scene.layout.GridPane;
 import javafx.stage.Stage;
 import javafx.stage.Window;
-import java.io.IOException;
 import java.net.URL;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -382,7 +381,6 @@ public class GameController implements Initializable, NetworkService.ServerListe
             System.out.println(getCurrentTimestamp()+" - GC: Ignoro onOpponentRematchDecision, stato non attivo/in attesa.");
             return;
         }
-
 
         if (!opponentAccepted) {
             if ("LOSE".equalsIgnoreCase(lastGameResult)) {

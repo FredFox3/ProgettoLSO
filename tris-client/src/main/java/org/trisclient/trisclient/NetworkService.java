@@ -364,7 +364,6 @@ public class NetworkService {
         }
     }
 
-
     public void sendMessage(String message) {
         final String msgToSend = message;
         PrintWriter currentOut = this.out;

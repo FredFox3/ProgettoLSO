@@ -12,33 +12,38 @@
 #define MAX_GAMES 10
 #define MAX_NAME_LEN 32
 
-typedef enum {
+typedef enum
+{
     CLIENT_STATE_CONNECTED,
     CLIENT_STATE_LOBBY,
     CLIENT_STATE_WAITING,
     CLIENT_STATE_PLAYING
 } ClientState;
 
-typedef enum {
+typedef enum
+{
     GAME_STATE_EMPTY,
     GAME_STATE_WAITING,
     GAME_STATE_IN_PROGRESS,
     GAME_STATE_FINISHED
 } GameState;
 
-typedef enum {
+typedef enum
+{
     CELL_EMPTY = 0,
     CELL_X,
     CELL_O
 } Cell;
 
-typedef enum {
+typedef enum
+{
     REMATCH_CHOICE_PENDING = 0,
     REMATCH_CHOICE_YES,
     REMATCH_CHOICE_NO
 } RematchChoice;
 
-typedef struct {
+typedef struct
+{
     int id;
     GameState state;
     Cell board[3][3];
@@ -54,7 +59,8 @@ typedef struct {
     RematchChoice player2_accepted_rematch;
 } GameInfo;
 
-typedef struct {
+typedef struct
+{
     int fd;
     ClientState state;
     char name[MAX_NAME_LEN];

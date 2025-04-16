@@ -47,7 +47,6 @@ public class Main extends Application {
                 System.out.println(getCurrentTimestamp()+" - Applicazione Principale: Uscita dall'applicazione.");
             });
 
-
             primaryStage.show();
             System.out.println(getCurrentTimestamp()+" - Applicazione Principale: Stage primario mostrato.");
         } catch (IOException e) {
