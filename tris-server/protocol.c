@@ -808,6 +808,9 @@ void process_rematch_command(int client_idx, const char *choice)
             LOG("Rematch VINCITORE YES da %s (fd %d) per partita %d\n", caller_name, caller_fd, game->id);
             game->state = GAME_STATE_WAITING;
             game->player1_fd = caller_fd;
+            strncpy(game->player1_name, caller_name, MAX_NAME_LEN - 1);
+            game->player1_name[MAX_NAME_LEN - 1] = '\0';
+            LOG("Impostato nuovo proprietario partita %d a '%s' (fd %d)\n", game->id, game->player1_name, game->player1_fd);
             game->player2_fd = -1;
             game->player2_name[0] = '\0';
             init_board(game->board);
